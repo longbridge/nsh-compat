@@ -414,6 +414,7 @@ impl Run {
             data_dir,
             storage: None,
             clock: Default::default(),
+            context: Default::default(),
             pinned: Default::default(),
             clipboard: None,
         };
