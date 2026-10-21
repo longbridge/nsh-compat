@@ -619,6 +619,10 @@ fn view(out: &mut Decls, style: &Style, default: &Style) {
     out.diff("shadowRadius", &v.shadow.radius, &d.shadow.radius, |v| {
         num(*v)
     });
+    // CSS's `perspective`: the children's depth.
+    out.diff("perspective", &style.perspective, &default.perspective, |p| {
+        p.map_or("-".into(), num)
+    });
     out.diff("transform", &v.transform, &d.transform, |t| {
         let ops: Vec<String> = t
             .ops()
@@ -1003,6 +1007,22 @@ fn class_props(out: &mut Decls, p: &ClassProps) {
     );
     out.diff("caretColor", &p.caret_color, &d.caret_color, |v| {
         v.as_ref().map_or("-".into(), color)
+    });
+    // `space-x/y-*`: the margins of the children but the last.
+    out.diff("space", &p.space, &d.space, |v| {
+        let Some(s) = v else { return "-".into() };
+        let value = |v: &Option<nsh_core::PatchValue>| match v {
+            Some(nsh_core::PatchValue::Number(n)) => num(*n),
+            Some(nsh_core::PatchValue::Str(s)) => s.to_string(),
+            _ => "-".into(),
+        };
+        format!(
+            "x={}{} y={}{}",
+            value(&s.x),
+            if s.reverse_x { " reverse" } else { "" },
+            value(&s.y),
+            if s.reverse_y { " reverse" } else { "" },
+        )
     });
     out.diff("textShadow", &p.text_shadows, &d.text_shadows, |v| {
         v.as_deref().map_or("-".into(), text_shadows)
