@@ -619,6 +619,13 @@ fn view(out: &mut Decls, style: &Style, default: &Style) {
     out.diff("shadowRadius", &v.shadow.radius, &d.shadow.radius, |v| {
         num(*v)
     });
+    // CSS's `perspective`: the children's depth.
+    out.diff(
+        "perspective",
+        &style.perspective,
+        &default.perspective,
+        |p| p.map_or("-".into(), num),
+    );
     out.diff("transform", &v.transform, &d.transform, |t| {
         let ops: Vec<String> = t
             .ops()
@@ -845,12 +852,21 @@ fn text(out: &mut Decls, t: &nsh_core::TextStyle, d: &nsh_core::TextStyle) {
     out.diff("lineHeight", &t.line_height, &d.line_height, |v| {
         some(v, |v| num(*v))
     });
-    // A multiple of the font size, as CSS's percentages are.
+    // A unitless multiplier inherits independently of the font size.
     out.diff(
         "lineHeight",
         &t.line_height_multiple,
         &d.line_height_multiple,
         |v| some(v, |v| format!("{}%", num(v * 100.0))),
+    );
+    out.diff("lineHeight", &t.line_height_em, &d.line_height_em, |v| {
+        some(v, |v| format!("{}em", num(*v)))
+    });
+    out.diff(
+        "textAlignPhysical",
+        &t.text_align_physical,
+        &d.text_align_physical,
+        |v| v.to_string(),
     );
     out.diff("textAlign", &t.text_align, &d.text_align, |v| {
         some(v, keyword)
@@ -1022,6 +1038,24 @@ fn class_props(out: &mut Decls, p: &ClassProps) {
     );
     out.diff("caretColor", &p.caret_color, &d.caret_color, |v| {
         v.as_ref().map_or("-".into(), color)
+    });
+    // `space-x/y-*`: the margins of the children but the last.
+    out.diff("space", &p.space, &d.space, |v| {
+        let Some(s) = v else { return "-".into() };
+        let value = |v: &Option<nsh_core::PatchValue>| match v {
+            Some(nsh_core::PatchValue::Number(n)) => num(*n),
+            Some(nsh_core::PatchValue::Str(s)) => s.to_string(),
+            _ => "-".into(),
+        };
+        format!(
+            "x={}{}{} y={}{}{}",
+            value(&s.x),
+            if s.reverse_x { " reverse" } else { "" },
+            if s.important_x { " !important" } else { "" },
+            value(&s.y),
+            if s.reverse_y { " reverse" } else { "" },
+            if s.important_y { " !important" } else { "" },
+        )
     });
     out.diff("textShadow", &p.text_shadows, &d.text_shadows, |v| {
         v.as_deref().map_or("-".into(), text_shadows)
