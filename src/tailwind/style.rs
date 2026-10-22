@@ -565,6 +565,7 @@ fn text_shadows(list: &[TextShadow]) -> String {
 
 fn view(out: &mut Decls, style: &Style, default: &Style) {
     let (v, d) = (&style.view, &default.view);
+    out.diff("glassEffect", &v.glass_effect, &d.glass_effect, keyword);
     out.diff(
         "backgroundColor",
         &v.background_color,
