@@ -399,7 +399,6 @@ impl Run {
         let errors = Arc::new(Mutex::new(Vec::new()));
         let thread = Arc::new(OnceLock::new());
         let config = EngineConfig {
-            app: nsh_engine::App::Js(bundle),
             viewport,
             trace: false,
             network: None,
@@ -414,9 +413,9 @@ impl Run {
             data_dir,
             storage: None,
             clock: Default::default(),
-            context: Default::default(),
             pinned: Default::default(),
             clipboard: None,
+            ..EngineConfig::new(bundle)
         };
         let sink = Sink {
             batches: tx,
