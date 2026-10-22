@@ -21,7 +21,8 @@
 //!   when set (not at their default); `{}` when none is;
 //! - lists: their items separated by `, `;
 //! - CSS-like values (`transform`, `boxShadow`, `filter`,
-//!   `backgroundImage`, `transformOrigin`, timing functions): CSS's
+//!   `backgroundImage`, `transformOrigin`, `objectPosition`, timing
+//!   functions): CSS's
 //!   syntax with the numbers above, lengths without units, angles in
 //!   `deg`, fractions in `%`.
 //!
@@ -503,6 +504,11 @@ impl Mounted {
         if let Some(c) = s.tint_color {
             out.put("tintColor", color(c));
         }
+        // An image's position travels with its source (`MountItem::Image`).
+        if self.kind == Some(ViewKind::Image) {
+            let (_, _, options) = self.image.clone().unwrap_or_default();
+            out.put("objectPosition", object_position(options.position));
+        }
         let origin = |o: DefiniteLength| match o {
             DefiniteLength::Absolute(v) => num(v.to_points(REM_SIZE)),
             DefiniteLength::Fraction(f) => format!("{}%", num(f.0 * 100.0)),
@@ -807,6 +813,23 @@ impl Num for Points {
     }
 }
 
+/// `objectPosition` as CSS's edges with offsets, which write every
+/// position: `left 50% top 0%`, `right 10 bottom 20%`.
+fn object_position(p: nsh_core::ObjectPosition) -> String {
+    let axis = |a: nsh_core::PositionAxis, start: &str, end: &str| {
+        let v = match a.offset {
+            DefiniteLength::Absolute(v) => num(v.to_points(REM_SIZE)),
+            DefiniteLength::Fraction(f) => format!("{}%", num(f.0 * 100.0)),
+        };
+        format!("{} {v}", if a.from_end { end } else { start })
+    };
+    format!(
+        "{} {}",
+        axis(p.x, "left", "right"),
+        axis(p.y, "top", "bottom")
+    )
+}
+
 /// A number with at most 3 decimals, without trailing zeros.
 pub(crate) fn num(v: impl Num) -> String {
     let v = v.value();
@@ -1057,6 +1080,11 @@ fn values_are_written_as_apps_write_them() {
     assert_eq!(styles["shadowOffset"], "width=0 height=-3");
     assert_eq!(styles["transformOrigin"], "50% 50% 0");
     assert_eq!(view.props()["accessibilityState"], "{}");
+    let image = Mounted {
+        kind: Some(ViewKind::Image),
+        ..Default::default()
+    };
+    assert_eq!(image.styles(None)["objectPosition"], "left 50% top 50%");
 }
 
 /// Keys added after the ones above, read from what the platform is told

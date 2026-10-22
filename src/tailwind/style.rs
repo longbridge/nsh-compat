@@ -657,6 +657,25 @@ fn view(out: &mut Decls, style: &Style, default: &Style) {
     });
     out.diff("elevation", &v.elevation, &d.elevation, |v| num(*v));
     out.diff(
+        "objectPosition",
+        &v.object_position,
+        &d.object_position,
+        |p| {
+            let axis = |a: &nsh_core::PositionAxis, start: &str, end: &str| {
+                format!(
+                    "{} {}",
+                    if a.from_end { end } else { start },
+                    definite(&a.offset)
+                )
+            };
+            format!(
+                "{} {}",
+                axis(&p.x, "left", "right"),
+                axis(&p.y, "top", "bottom")
+            )
+        },
+    );
+    out.diff(
         "transformOrigin",
         &v.transform_origin,
         &d.transform_origin,
