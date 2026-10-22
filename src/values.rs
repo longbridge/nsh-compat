@@ -546,6 +546,7 @@ impl Mounted {
         );
         out.put("filter", filters(&effects.filters));
         out.put("backdropFilter", filters(&effects.backdrop_filters));
+        out.put("glassEffect", s.glass_effect.name().into());
         out.put("mixBlendMode", s.blend_mode.name().into());
         out.put("outlineWidth", num(s.outline.width));
         out.put("outlineColor", color(s.outline.color));
