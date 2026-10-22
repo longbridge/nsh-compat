@@ -244,6 +244,7 @@ impl Mounted {
         }
         let style = self.style.as_deref().cloned().unwrap_or_default();
         out.put("elevation", num(style.elevation));
+        out.put("backdropMaterial", style.backdrop_material.name().into());
 
         match self.kind {
             Some(ViewKind::Text) => {
@@ -1090,6 +1091,13 @@ fn values_are_written_as_apps_write_them() {
         ..Default::default()
     };
     assert_eq!(image.styles(None)["objectPosition"], "left 50% top 50%");
+    assert_eq!(view.props()["backdropMaterial"], "ultraThin");
+    let mut view = Mounted {
+        style: Some(Box::default()),
+        ..view
+    };
+    view.style.as_mut().unwrap().backdrop_material = nsh_core::BackdropMaterial::Regular;
+    assert_eq!(view.props()["backdropMaterial"], "regular");
 }
 
 /// Keys added after the ones above, read from what the platform is told
