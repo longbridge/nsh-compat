@@ -147,12 +147,18 @@ const TAP_WAIT: Duration = Duration::from_millis(1000);
 /// How long the app must send nothing to count as quiet.
 const QUIET: Duration = Duration::from_millis(300);
 
+/// The display's frame interval: a frame the engine asks for begins this
+/// long after it asked, as at 60 Hz.
+const FRAME: Duration = Duration::from_millis(16);
+
 struct Sink {
     batches: Sender<MountBatch>,
     errors: Arc<Mutex<Vec<String>>>,
     /// The engine's thread, which runs the app's JS: what it logs is the
     /// app's.
     thread: Arc<OnceLock<ThreadId>>,
+    /// The engine's requests for a display frame (`requestAnimationFrame`).
+    frames: Sender<()>,
 }
 
 impl MountSink for Sink {
@@ -163,6 +169,10 @@ impl MountSink for Sink {
 
     fn report_error(&self, message: &str) {
         self.errors.lock().unwrap().push(message.to_owned());
+    }
+
+    fn request_frame(&self) {
+        let _ = self.frames.send(());
     }
 }
 
@@ -417,12 +427,23 @@ impl Run {
             clipboard: None,
             ..EngineConfig::new(bundle)
         };
+        let (frames, requests) = crossbeam_channel::unbounded();
         let sink = Sink {
             batches: tx,
             errors: errors.clone(),
             thread: thread.clone(),
+            frames,
         };
         let engine = Engine::start(config, || ApproxTextEngine, sink).unwrap();
+        // The display: each frame the engine asks for begins a frame
+        // interval later. It ends with the engine, which holds the sink.
+        let control = engine.control();
+        std::thread::spawn(move || {
+            while requests.recv().is_ok() {
+                std::thread::sleep(FRAME);
+                control.frame();
+            }
+        });
         Run {
             control: engine.control(),
             _engine: engine,
