@@ -304,6 +304,11 @@ impl Mounted {
                 out.put("zoomable", b.pinch.to_string());
                 out.put("centerContent", b.center_content.to_string());
                 out.put("refreshing", self.refreshing.to_string());
+                if let Some(h) = b.refresh_indicator {
+                    let mut o = Object::default();
+                    o.opt("height", Some(num(h)));
+                    out.put("refreshIndicator", o.done());
+                }
             }
             Some(ViewKind::Input) => {
                 let c = self.input.as_deref().cloned().unwrap_or_default();
@@ -1098,6 +1103,16 @@ fn values_are_written_as_apps_write_them() {
     };
     view.style.as_mut().unwrap().backdrop_material = nsh_core::BackdropMaterial::Regular;
     assert_eq!(view.props()["backdropMaterial"], "regular");
+    let mut scroll = Mounted {
+        kind: Some(ViewKind::Scroll),
+        ..Default::default()
+    };
+    assert!(!scroll.props().contains_key("refreshIndicator"));
+    scroll.behavior = Some(Box::new(ScrollBehavior {
+        refresh_indicator: Some(Points(72.0)),
+        ..Default::default()
+    }));
+    assert_eq!(scroll.props()["refreshIndicator"], "height=72");
 }
 
 /// Keys added after the ones above, read from what the platform is told
@@ -1112,10 +1127,11 @@ fn values_are_written_as_apps_write_them() {
 /// - `stickyHeaderIndices` (lists): the sticky cells as the platform pins
 ///   them, `start=<n> end=<n>` each (content points along the main axis,
 ///   `end` `Infinity` for the last), in the core's order;
-/// - `scrollValue`, `pan` (`{ x?, y? }`), `pinch` (`{ scale? }`),
-///   `rotation` (`{ angle? }`): the animated values the scroll offset
-///   and the gestures drive, each written as the value it was created
-///   with (so a script tells them apart);
+/// - `scrollValue`, `pullValue`, `pan` (`{ x?, y? }`), `pinch`
+///   (`{ scale? }`), `rotation` (`{ angle? }`): the animated values the
+///   scroll offset, the pull past the top and the gestures drive, each
+///   written as the value it was created with (so a script tells them
+///   apart);
 /// - `selectedRange` (inputs): the selection the platform was last told
 ///   to make (`selectedRange`, a ref's `setSelection`), `start=<n> end=<n>`
 ///   in UTF-16 units; missing until one;
@@ -1133,6 +1149,7 @@ struct Later {
     /// node.
     gestures: Option<[Option<nsh_core::animation::NodeId>; 4]>,
     scroll_value: Option<nsh_core::animation::NodeId>,
+    pull_value: Option<nsh_core::animation::NodeId>,
     status_bar: Option<nsh_core::StatusBarConfig>,
 }
 
@@ -1158,7 +1175,14 @@ impl Later {
             MountItem::Gestures { values, .. } => {
                 self.gestures = Some([values.pan_x, values.pan_y, values.pinch, values.rotation]);
             }
-            MountItem::ScrollConfig { scroll_value, .. } => self.scroll_value = *scroll_value,
+            MountItem::ScrollConfig {
+                scroll_value,
+                pull_value,
+                ..
+            } => {
+                self.scroll_value = *scroll_value;
+                self.pull_value = *pull_value;
+            }
             _ => {}
         }
     }
@@ -1193,6 +1217,9 @@ impl Later {
             }
             if let Some(v) = animated(self.scroll_value) {
                 out.put("scrollValue", v);
+            }
+            if let Some(v) = animated(self.pull_value) {
+                out.put("pullValue", v);
             }
         }
         if let Some((start, end)) = self.selection {
