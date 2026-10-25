@@ -1105,8 +1105,10 @@ fn values_are_written_as_apps_write_them() {
         ..Default::default()
     };
     assert_eq!(input.props()["pasteBehavior"], "insert");
-    let mut config = InputConfig::default();
-    config.paste_behavior = nsh_core::PasteBehavior::Report;
+    let config = InputConfig {
+        paste_behavior: nsh_core::PasteBehavior::Report,
+        ..InputConfig::default()
+    };
     input.apply(&MountItem::Input {
         id: 1,
         config: Box::new(config),

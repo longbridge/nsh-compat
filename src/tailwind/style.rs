@@ -1009,7 +1009,7 @@ fn paint(out: &mut Decls, p: &nsh_core::PaintStyle, d: &nsh_core::PaintStyle) {
     out.diff("fill", &p.fill, &d.fill, svg);
     out.diff("stroke", &p.stroke, &d.stroke, svg);
     out.diff("strokeWidth", &p.stroke_width, &d.stroke_width, |v| {
-        v.map_or("inherit".into(), |w| num(w))
+        v.map_or("inherit".into(), num)
     });
     out.diff(
         "strokeDasharray",
