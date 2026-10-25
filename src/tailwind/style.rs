@@ -1011,11 +1011,16 @@ fn paint(out: &mut Decls, p: &nsh_core::PaintStyle, d: &nsh_core::PaintStyle) {
     out.diff("strokeWidth", &p.stroke_width, &d.stroke_width, |v| {
         v.map_or("inherit".into(), |w| num(w))
     });
-    out.diff("strokeDasharray", &p.stroke_dasharray, &d.stroke_dasharray, |v| match v {
-        None => "inherit".into(),
-        Some(l) if l.is_empty() => "none".into(),
-        Some(l) => l.iter().map(|w| num(*w)).collect::<Vec<_>>().join(" "),
-    });
+    out.diff(
+        "strokeDasharray",
+        &p.stroke_dasharray,
+        &d.stroke_dasharray,
+        |v| match v {
+            None => "inherit".into(),
+            Some(l) if l.is_empty() => "none".into(),
+            Some(l) => l.iter().map(|w| num(*w)).collect::<Vec<_>>().join(" "),
+        },
+    );
 }
 
 fn class_props(out: &mut Decls, p: &ClassProps) {
