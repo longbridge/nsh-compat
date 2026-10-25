@@ -26,6 +26,7 @@ pub(super) fn decls(style: &Style, props: &ClassProps, default: &Style) -> Vec<S
     layout(&mut out, &style.layout, &default.layout);
     view(&mut out, style, default);
     text(&mut out, &style.text, &default.text);
+    paint(&mut out, &style.paint, &default.paint);
     class_props(&mut out, props);
     // A border's width is both layout's and the view's: once.
     let mut seen = std::collections::HashSet::new();
@@ -995,6 +996,26 @@ fn text(out: &mut Decls, t: &nsh_core::TextStyle, d: &nsh_core::TextStyle) {
         &d.selection_color,
         |v| some(v, color),
     );
+}
+
+/// SVG's paint properties (`fill-*`, `stroke-*`), unset where they inherit.
+fn paint(out: &mut Decls, p: &nsh_core::PaintStyle, d: &nsh_core::PaintStyle) {
+    let svg = |v: &Option<nsh_core::SvgPaint>| match v {
+        None => "inherit".to_owned(),
+        Some(nsh_core::SvgPaint::None) => "none".to_owned(),
+        Some(nsh_core::SvgPaint::CurrentColor) => "currentColor".to_owned(),
+        Some(nsh_core::SvgPaint::Color(c)) => color(c),
+    };
+    out.diff("fill", &p.fill, &d.fill, svg);
+    out.diff("stroke", &p.stroke, &d.stroke, svg);
+    out.diff("strokeWidth", &p.stroke_width, &d.stroke_width, |v| {
+        v.map_or("inherit".into(), |w| num(w))
+    });
+    out.diff("strokeDasharray", &p.stroke_dasharray, &d.stroke_dasharray, |v| match v {
+        None => "inherit".into(),
+        Some(l) if l.is_empty() => "none".into(),
+        Some(l) => l.iter().map(|w| num(*w)).collect::<Vec<_>>().join(" "),
+    });
 }
 
 fn class_props(out: &mut Decls, p: &ClassProps) {

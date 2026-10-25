@@ -175,7 +175,11 @@ fn sorted(out: &mut String, text: &str) {
 /// the bundler adds (asset imports) and the standard library's upstream
 /// declarations, whose compatibility quickjs-stdlib owns.
 pub(crate) fn types() -> Vec<(String, String)> {
-    let mut files = nsh_js::type_definitions(&[nsh_base::registry().into()]);
+    // `nsh/base` with its submodules (`nsh/base/plot`).
+    let base = nsh_base::registry();
+    let sets: Vec<nsh_core::ui::description::SetDescription> =
+        base.sets().into_iter().map(Into::into).collect();
+    let mut files = nsh_js::type_definitions(&sets);
     files.retain(|(path, _)| path != "standard/llrt-sources.d.ts");
     for (path, text) in &mut files {
         if path == "standard/index.d.ts" {
