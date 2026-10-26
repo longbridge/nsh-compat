@@ -27,9 +27,12 @@ pub(super) fn decls(style: &Style, props: &ClassProps, default: &Style) -> Vec<S
     view(&mut out, style, default);
     text(&mut out, &style.text, &default.text);
     paint(&mut out, &style.paint, &default.paint);
-    out.diff("objectFit", &style.object_fit(), &default.object_fit(), |v| {
-        v.as_ref().map_or("-".into(), keyword)
-    });
+    out.diff(
+        "objectFit",
+        &style.object_fit(),
+        &default.object_fit(),
+        |v| v.as_ref().map_or("-".into(), keyword),
+    );
     class_props(&mut out, props);
     // A border's width is both layout's and the view's: once.
     let mut seen = std::collections::HashSet::new();
