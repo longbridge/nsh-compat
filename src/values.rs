@@ -67,6 +67,9 @@ pub(crate) struct Mounted {
     /// The interaction states the platform reports
     /// ([`MountItem::TrackStates`]; bits of `nsh_core::tailwind::state`).
     tracked: u8,
+    /// A canvas's latest drawing ([`MountItem::Canvas`]), as
+    /// [`Mounted::drawing`] writes it.
+    drawing: Option<Arc<nsh_core::canvas::Drawing>>,
     /// The keys [`Later`] reads.
     later: Later,
 }
@@ -108,6 +111,7 @@ impl Mounted {
             MountItem::ModalConfig { config, .. } => self.modal = Some(*config),
             MountItem::NativeProps { props, .. } => self.native = Some(props.clone()),
             MountItem::TrackStates { states, .. } => self.tracked = *states,
+            MountItem::Canvas { drawing, .. } => self.drawing = Some(drawing.clone()),
             _ => {}
         }
         self.later.apply(item);
@@ -135,7 +139,8 @@ impl Mounted {
             | MountItem::Gestures { id, .. }
             | MountItem::StickyCells { id, .. }
             | MountItem::ScrollBy { id, .. }
-            | MountItem::Command { id, .. } => *id,
+            | MountItem::Command { id, .. }
+            | MountItem::Canvas { id, .. } => *id,
             _ => return None,
         })
     }
@@ -1293,6 +1298,15 @@ impl Mounted {
         Some(out)
     }
 
+    /// The operations of the canvas's latest drawing, as drawing.rs writes
+    /// them; none until it drew (or for a view that is no canvas).
+    pub(crate) fn drawing(&self) -> Vec<String> {
+        self.drawing
+            .as_deref()
+            .map(crate::drawing::ops)
+            .unwrap_or_default()
+    }
+
     /// The user scrolled the view to `x`, `y` (a script's `scroll` step).
     pub(crate) fn scrolled(&mut self, x: f32, y: f32) {
         self.later.offset = Some((x, y));
@@ -1304,6 +1318,12 @@ thread_local! {
     /// with: the mount items create them before views bind them.
     static ANIMATED: std::cell::RefCell<std::collections::HashMap<nsh_core::animation::NodeId, f32>> =
         Default::default();
+}
+
+/// The value animated node `node` of the run on this thread was created
+/// with.
+pub(crate) fn animated_value(node: nsh_core::animation::NodeId) -> Option<f32> {
+    ANIMATED.with(|a| a.borrow().get(&node).copied())
 }
 
 /// Takes in the animated values `item` creates; `None` starts a run.
