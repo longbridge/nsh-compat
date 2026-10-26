@@ -27,6 +27,9 @@ pub(super) fn decls(style: &Style, props: &ClassProps, default: &Style) -> Vec<S
     view(&mut out, style, default);
     text(&mut out, &style.text, &default.text);
     paint(&mut out, &style.paint, &default.paint);
+    out.diff("objectFit", &style.object_fit(), &default.object_fit(), |v| {
+        v.as_ref().map_or("-".into(), keyword)
+    });
     class_props(&mut out, props);
     // A border's width is both layout's and the view's: once.
     let mut seen = std::collections::HashSet::new();
@@ -608,19 +611,6 @@ fn view(out: &mut Decls, style: &Style, default: &Style) {
     out.diff("overflow", &v.overflow_hidden, &d.overflow_hidden, |h| {
         if *h { "hidden" } else { "visible" }.into()
     });
-    out.diff("shadowColor", &v.shadow.color, &d.shadow.color, color);
-    if (v.shadow.offset_x, v.shadow.offset_y) != (d.shadow.offset_x, d.shadow.offset_y) {
-        out.push(
-            "shadowOffset",
-            format!("{} {}", num(v.shadow.offset_x), num(v.shadow.offset_y)),
-        );
-    }
-    out.diff("shadowOpacity", &v.shadow.opacity, &d.shadow.opacity, |v| {
-        num(*v)
-    });
-    out.diff("shadowRadius", &v.shadow.radius, &d.shadow.radius, |v| {
-        num(*v)
-    });
     // CSS's `perspective`: the children's depth.
     out.diff(
         "perspective",
@@ -1045,9 +1035,6 @@ fn class_props(out: &mut Decls, p: &ClassProps) {
     out.diff("pointerEvents", &p.pointer_events, &d.pointer_events, |v| {
         v.as_ref().map_or("-".into(), keyword)
     });
-    out.diff("resizeMode", &p.resize_mode, &d.resize_mode, |v| {
-        v.as_ref().map_or("-".into(), keyword)
-    });
     out.diff("selectable", &p.selectable, &d.selectable, |v| {
         v.map_or("-".into(), |b| b.to_string())
     });
@@ -1069,9 +1056,16 @@ fn class_props(out: &mut Decls, p: &ClassProps) {
     // `space-x/y-*`: the margins of the children but the last.
     out.diff("space", &p.space, &d.space, |v| {
         let Some(s) = v else { return "-".into() };
-        let value = |v: &Option<nsh_core::PatchValue>| match v {
-            Some(nsh_core::PatchValue::Number(n)) => num(*n),
-            Some(nsh_core::PatchValue::Str(s)) => s.to_string(),
+        let value = |v: &Option<nsh_core::PropertyValue>| match v {
+            Some(nsh_core::PropertyValue::Lpa(l)) if l.is_auto() => "auto".into(),
+            Some(nsh_core::PropertyValue::Lpa(l)) => {
+                let raw = l.into_raw();
+                if raw.tag() == taffy::CompactLength::PERCENT_TAG {
+                    format!("{}%", num(raw.value() * 100.0))
+                } else {
+                    num(raw.value())
+                }
+            }
             _ => "-".into(),
         };
         format!(
