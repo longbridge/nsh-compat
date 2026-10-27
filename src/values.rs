@@ -443,13 +443,7 @@ impl Mounted {
         out.put("pointerEvents", p.pointer_events.js_name().into());
         if let Some(ViewKind::Text) = self.kind {
             let text = self.text.as_deref().cloned().unwrap_or_default();
-            out.put(
-                "lineClamp",
-                match text.max_lines {
-                    0 => "none".into(),
-                    n => n.to_string(),
-                },
-            );
+            out.put("numberOfLines", text.max_lines.to_string());
             out.put(
                 "textOverflow",
                 match text.ellipsize {
@@ -461,7 +455,7 @@ impl Mounted {
                 .into(),
             );
             if let Some(v) = text.selectable {
-                out.put("userSelect", if v { "text" } else { "none" }.into());
+                out.put("selectable", v.to_string());
             }
         }
         let s = self.style.as_deref().cloned().unwrap_or_default();
