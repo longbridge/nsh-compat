@@ -455,7 +455,7 @@ impl Mounted {
                 .into(),
             );
             if let Some(v) = text.selectable {
-                out.put("selectable", v.to_string());
+                out.put("userSelect", if v { "text" } else { "none" }.into());
             }
         }
         let s = self.style.as_deref().cloned().unwrap_or_default();
