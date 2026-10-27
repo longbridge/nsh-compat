@@ -23,8 +23,8 @@
 //!   Dialog.onOpenChange`), less the host props' names, which it inherits
 //!   or passes on as they are (`testID`, `style`, `animation`, ...) and
 //!   which are items of their own; an event is an `on…` function;
-//! - `[styles] <name>`: the keys of `LayoutStyle`, `ViewStyle`, `TextStyle`
-//!   and `ImageStyle`.
+//! - `[styles] <name>`: the keys of `LayoutStyle`, `ViewStyle`, `TextStyle`,
+//!   `InputStyle` and `ImageStyle`.
 //!
 //! A script claims the parts it checks with `covers <item>` steps, and the
 //! claims are verified ([`verify`]): the bundle uses the part (a
@@ -58,7 +58,13 @@ use std::{
 use super::{apps, compare, text};
 
 /// The interfaces of the style keys.
-const STYLES: &[&str] = &["LayoutStyle", "ViewStyle", "TextStyle", "ImageStyle"];
+const STYLES: &[&str] = &[
+    "LayoutStyle",
+    "ViewStyle",
+    "TextStyle",
+    "InputStyle",
+    "ImageStyle",
+];
 
 /// The primitives the JSX compiler makes in place rather than import
 /// (`jsx::PRIMITIVES`): their host element, or `None` for `List`, which is

@@ -164,7 +164,6 @@ impl Mounted {
         let mut out = Out::new();
         let p = self.props.as_deref().cloned().unwrap_or_default();
         let a = &p.accessibility;
-        out.put("pointerEvents", p.pointer_events.js_name().into());
         out.put("hitSlop", insets(&p.hit_slop));
         if let Some(v) = p.long_press_delay {
             out.put("delayLongPress", num(v));
@@ -247,14 +246,6 @@ impl Mounted {
         out.put("backdropMaterial", style.backdrop_material.name().into());
 
         match self.kind {
-            Some(ViewKind::Text) => {
-                let text = self.text.as_deref().cloned().unwrap_or_default();
-                out.put("numberOfLines", text.max_lines.to_string());
-                out.put("ellipsizeMode", text.ellipsize.js_name().into());
-                if let Some(v) = text.selectable {
-                    out.put("selectable", v.to_string());
-                }
-            }
             Some(ViewKind::Image) => {
                 let (source, resize, options) = self.image.clone().unwrap_or_default();
                 if let Some(s) = source {
@@ -448,6 +439,25 @@ impl Mounted {
     /// of the run at UTF-16 offset `at` (the first run by default).
     pub(crate) fn styles(&self, at: Option<u32>) -> Out {
         let mut out = Out::new();
+        let p = self.props.as_deref().cloned().unwrap_or_default();
+        out.put("pointerEvents", p.pointer_events.js_name().into());
+        if let Some(ViewKind::Text) = self.kind {
+            let text = self.text.as_deref().cloned().unwrap_or_default();
+            out.put("numberOfLines", text.max_lines.to_string());
+            out.put(
+                "textOverflow",
+                match text.ellipsize {
+                    nsh_core::EllipsizeMode::Tail => "ellipsis",
+                    nsh_core::EllipsizeMode::Head => "ellipsis-start",
+                    nsh_core::EllipsizeMode::Middle => "ellipsis-middle",
+                    nsh_core::EllipsizeMode::Clip => "clip",
+                }
+                .into(),
+            );
+            if let Some(v) = text.selectable {
+                out.put("userSelect", if v { "text" } else { "none" }.into());
+            }
+        }
         let s = self.style.as_deref().cloned().unwrap_or_default();
         out.put("backgroundColor", color(s.background_color));
         out.put("borderRadius", num(s.border_radius));
@@ -503,10 +513,6 @@ impl Mounted {
             }
             .into(),
         );
-        out.put("shadowColor", color(s.shadow.color));
-        out.put("shadowOffset", size(s.shadow.offset_x, s.shadow.offset_y));
-        out.put("shadowOpacity", num(s.shadow.opacity));
-        out.put("shadowRadius", num(s.shadow.radius));
         out.put("transform", transform(&s));
         if let Some(c) = s.tint_color {
             out.put("tintColor", color(c));
@@ -660,6 +666,9 @@ impl Mounted {
                 }
                 if let Some(v) = c.selection_color {
                     out.put("selectionColor", color(v));
+                }
+                if let Some(v) = c.caret_color {
+                    out.put("caretColor", color(v));
                 }
                 (c.style, c.align)
             }
@@ -1089,7 +1098,6 @@ fn values_are_written_as_apps_write_them() {
     let styles = view.styles(None);
     assert_eq!(styles["backgroundColor"], "#00000000");
     assert_eq!(styles["opacity"], "1");
-    assert_eq!(styles["shadowOffset"], "width=0 height=-3");
     assert_eq!(styles["transformOrigin"], "50% 50% 0");
     assert_eq!(view.props()["accessibilityState"], "{}");
     let image = Mounted {
