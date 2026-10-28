@@ -63,7 +63,7 @@
 //!   handler's payload keys; a value is a number, `true`, `false` or a
 //!   string, quoted when it has spaces or looks like a number), none
 //!   without keys. A key given more than once makes a list (`onFileDrop`'s
-//!   `uris`). `onHoverMove` and `onContextMenu` get their typed payload:
+//!   `uris`). `onMouseMove`, `onMouseEnter`, `onMouseLeave` and `onContextMenu` get their typed payload:
 //!   `pageX` / `pageY` default to the listening view's position on screen
 //!   plus `locationX` / `locationY`, the modifier keys to false;
 //! - `touch start <selector> <x> <y>`, `touch move <x> <y>`,
@@ -134,8 +134,9 @@ use std::{
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use nsh_core::{
-    ApproxTextEngine, ContextMenuEvent, EventKind, EventPayload, HoverEvent, MountBatch, MountItem,
-    NodeId, PayloadValue, Points, Size, TextLink, TouchEvent, TouchPhase, TouchPoint,
+    ApproxTextEngine, ContextMenuEvent, EventKind, EventPayload, MountBatch, MountItem,
+    MouseButton, MouseEvent, NodeId, PayloadValue, Points, Size, TextLink, TouchEvent, TouchPhase,
+    TouchPoint,
     geometry::{DevicePixels, point, px},
     keymap::Modifiers,
     platform::{Environment, Idiom, Os},
@@ -388,6 +389,34 @@ impl Views {
             Some(text[..byte].encode_utf16().count() as u32)
         });
         Some((&view.mounted, at))
+    }
+
+    /// What the view `selector` names draws, or, when it draws nothing of
+    /// its own, the first canvas inside it (a component's mark wrapped in
+    /// views of its own: a plot's `Area`, a `Pie`'s first slice).
+    fn drawing_of(&self, selector: &str) -> Option<Vec<String>> {
+        let mut stack = vec![self.find_view(selector)?];
+        while let Some(id) = stack.pop() {
+            let view = self.nodes.get(&id)?;
+            if view.mounted.draws() {
+                return Some(view.mounted.drawing());
+            }
+            if let Some(children) = self.children.get(&id) {
+                stack.extend(children.iter().rev());
+            }
+        }
+        Some(Vec::new())
+    }
+
+    /// The outermost view around `id`: the root the app renders into.
+    fn top_of(&self, mut id: NodeId) -> NodeId {
+        while let Some(parent) = self.nodes.get(&id).and_then(|v| v.parent) {
+            if parent == ROOT {
+                break;
+            }
+            id = parent;
+        }
+        id
     }
 
     fn pressable_from(&self, mut id: NodeId) -> Option<NodeId> {
@@ -649,6 +678,9 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
         }
         lines.next();
     }
+    // The surface's size, as a platform reports it with every environment:
+    // `keyboard` and `pixelratio` send this one again.
+    environment.window = viewport;
     values::animated(None);
     let (bundle, declares) = bundle(code, dir)?;
     // Declared before the run, so dropped after its engine, which may
@@ -674,7 +706,19 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
     }
     let mut shown = run.views.texts();
     let mut device = Device::default();
+    // `NSH_COMPAT_KEEP_GOING=1`: a failed step skips to the next case
+    // (`tap id:case-…`) instead of ending the run, and every case's first
+    // failure is reported at the end.
+    let keep_going = std::env::var_os("NSH_COMPAT_KEEP_GOING").is_some();
+    let mut failures: Vec<Failure> = Vec::new();
+    let mut skipping = false;
     for (n, line) in lines.enumerate() {
+        if skipping {
+            if !line.starts_with("tap id:case-") {
+                continue;
+            }
+            skipping = false;
+        }
         let (step, arg) = line.split_once(' ').unwrap_or((line, ""));
         let failed = |what: String, run: &Run| {
             let errors = run.errors();
@@ -688,398 +732,441 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                 ),
             })
         };
-        match step {
-            "expect" => {
-                if !run.until(EXPECT_WAIT, |v| v.shows(arg)) {
-                    return failed("not shown".into(), &run);
-                }
-            }
-            "absent" => {
-                run.settle(EXPECT_WAIT);
-                if run.views.shows(arg) {
-                    return failed("still shown".into(), &run);
-                }
-            }
-            "tap" => {
-                run.settle(TAP_WAIT);
-                let Some(id) = run.views.link(arg).or_else(|| run.views.find(arg)) else {
-                    return failed("nothing to press".into(), &run);
-                };
-                run.control
-                    .dispatch_event(id, EventKind::Press, EventPayload::None);
-            }
-            "wait" => {
-                let ms: u64 = arg.parse().map_err(|_| format!("wait `{arg}`"))?;
-                run.until(Duration::from_millis(ms), |_| false);
-            }
-            "frame" => {
-                let mut parts = arg.split(' ');
-                let selector = parts.next().unwrap_or_default();
-                let want: Vec<f32> = parts.filter_map(|p| p.parse().ok()).collect();
-                let [x, y, w, h] = want[..] else {
-                    return Err(
-                        format!("frame `{arg}`: <selector> <x> <y> <width> <height>").into(),
-                    );
-                };
-                let at = |v: &Views| v.find_view(selector).and_then(|id| v.nodes.get(&id)?.frame);
-                let fits = |v: &Views| {
-                    at(v).is_some_and(|f| {
-                        [f.x - x, f.y - y, f.width - w, f.height - h]
-                            .iter()
-                            .all(|d| d.abs() < 0.5)
-                    })
-                };
-                if !run.until(EXPECT_WAIT, fits) {
-                    let what = match at(&run.views) {
-                        Some(f) => format!("laid out at {} {} {} {}", f.x, f.y, f.width, f.height),
-                        None => "no such view".to_owned(),
-                    };
-                    return failed(what, &run);
-                }
-            }
-            "prop" | "style" => {
-                let (selector, rest) = selector(arg);
-                let (name, want) = rest
-                    .split_once(' ')
-                    .ok_or_else(|| format!("`{line}`: {step} <selector> <name> <value>"))?;
-                let (key, want) = (values::key(name), want.trim());
-                let all = |v: &Views| {
-                    let (m, at) = v.mounted(&selector)?;
-                    Some(if step == "prop" {
-                        m.props()
-                    } else {
-                        m.styles(at)
-                    })
-                };
-                let read = |v: &Views| all(v)?.remove(key);
-                if !run.until(EXPECT_WAIT, |v| read(v).as_deref() == Some(want)) {
-                    let what = match all(&run.views) {
-                        None => "no such view".to_owned(),
-                        Some(all) => {
-                            // What the view has, for writing the step.
-                            let has: Vec<String> =
-                                all.iter().map(|(k, v)| format!("{k} {v}")).collect();
-                            let got = match all.get(key) {
-                                None => format!("no {step} `{key}`"),
-                                Some(got) => format!("`{key}` is `{got}`"),
-                            };
-                            format!("{got}\nthe view's {step}s:\n  {}", has.join("\n  "))
-                        }
-                    };
-                    return failed(what, &run);
-                }
-            }
-            "noprop" | "nostyle" => {
-                let (selector, name) = selector(arg);
-                let key = values::key(name.trim());
-                run.settle(EXPECT_WAIT);
-                let Some((m, at)) = run.views.mounted(&selector) else {
-                    return failed("no such view".into(), &run);
-                };
-                let (got, unset) = if step == "noprop" {
-                    (m.props().remove(key), m.blank().props().remove(key))
-                } else {
-                    (m.styles(at).remove(key), m.blank().styles(at).remove(key))
-                };
-                if let Some(got) = got.filter(|g| Some(g) != unset.as_ref()) {
-                    return failed(format!("`{key}` is `{got}`"), &run);
-                }
-            }
-            "drawing" => {
-                let (selector, want) = selector(arg);
-                let want = want.trim();
-                if want.is_empty() {
-                    return Err(format!("`{line}`: drawing <selector> <operation>").into());
-                }
-                let ops = |v: &Views| v.mounted(&selector).map(|(m, _)| m.drawing());
-                let has = |v: &Views| {
-                    ops(v).is_some_and(|ops| ops.iter().any(|op| drawing::matches(op, want)))
-                };
-                if !run.until(EXPECT_WAIT, has) {
-                    let what = match ops(&run.views) {
-                        None => "no such view".to_owned(),
-                        Some(ops) if ops.is_empty() => "it drew nothing".to_owned(),
-                        // What it draws, for writing the step.
-                        Some(ops) => format!(
-                            "no operation `{want}`\nthe drawing's operations:\n  {}",
-                            ops.join("\n  ")
-                        ),
-                    };
-                    return failed(what, &run);
-                }
-            }
-            "nodrawing" => {
-                let (selector, want) = selector(arg);
-                let want = want.trim();
-                if want.is_empty() {
-                    return Err(format!("`{line}`: nodrawing <selector> <operation>").into());
-                }
-                run.settle(EXPECT_WAIT);
-                let Some((m, _)) = run.views.mounted(&selector) else {
-                    return failed("no such view".into(), &run);
-                };
-                if let Some(op) = m.drawing().iter().find(|op| drawing::matches(op, want)) {
-                    return failed(format!("it draws `{op}`"), &run);
-                }
-            }
-            "listens" => {
-                let (selector, event) = selector(arg);
-                let event = event.trim();
-                let kinds = event_kinds(event);
-                if kinds.is_empty() {
-                    return Err(format!("`{line}`: `{event}` is no event").into());
-                }
-                let listens = |v: &Views| {
-                    v.mounted(&selector)
-                        .is_some_and(|(m, _)| kinds.iter().any(|&k| m.listens(k)))
-                };
-                if !run.until(EXPECT_WAIT, listens) {
-                    return failed(format!("`{event}` not reported"), &run);
-                }
-            }
-            "log" => {
-                if !run.poll(EXPECT_WAIT, |r| r.printed(arg)) {
-                    return failed("not printed".into(), &run);
-                }
-            }
-            "event" => {
-                let (selector, rest) = selector(arg);
-                let rest = rest.trim();
-                let (name, fields) = rest.split_once(' ').unwrap_or((rest, ""));
-                let kinds = event_kinds(name);
-                if kinds.is_empty() {
-                    return Err(format!("`{line}`: `{name}` is no event").into());
-                }
-                let fields = parse_fields(fields).map_err(|e| format!("`{line}`: {e}"))?;
-                run.settle(TAP_WAIT);
-                // The first of the events the name may be that a view
-                // around reports (`onCancel`: a dialog's, an overlay's).
-                let Some((id, kind)) = run.views.find_view(&selector).and_then(|id| {
-                    kinds
-                        .iter()
-                        .find_map(|&k| listener(&run.views, id, k).map(|at| (at, k)))
-                }) else {
-                    return failed(format!("nothing there reports `{name}`"), &run);
-                };
-                let payload = event_payload(&run.views, id, kind, fields, &mut device)
-                    .map_err(|e| format!("`{line}`: {e}"))?;
-                run.control.dispatch_event(id, kind, payload);
-            }
-            "touch" => {
-                let (phase, rest) = arg.split_once(' ').unwrap_or((arg, ""));
-                run.settle(TAP_WAIT);
-                let touch = match phase {
-                    "start" => {
-                        let (selector, at) = selector(rest);
-                        let at = numbers::<2>(at)
-                            .ok_or_else(|| format!("`{line}`: touch start <selector> <x> <y>"))?;
-                        let Some(target) = run.views.find_view(&selector) else {
-                            return failed("no such view".into(), &run);
-                        };
-                        let path = touch_path(&run.views, target);
-                        if path.is_empty() {
-                            return failed("nothing there listens to touches".into(), &run);
-                        }
-                        device.finger = Some((target, path, at));
-                        device.touch(&run.views, TouchPhase::Start)
+        let mut step_run = || -> Result<(), Failure> {
+            match step {
+                "expect" => {
+                    if !run.until(EXPECT_WAIT, |v| v.shows(arg)) {
+                        return failed("not shown".into(), &run);
                     }
-                    "move" | "end" | "cancel" => {
-                        let Some(finger) = device.finger.as_mut() else {
-                            return Err(format!("`{line}`: no finger is down").into());
-                        };
-                        if let Some(at) = numbers::<2>(rest) {
-                            finger.2 = at;
-                        } else if phase == "move" || !rest.trim().is_empty() {
-                            return Err(format!("`{line}`: touch {phase} <x> <y>").into());
-                        }
-                        let phase = match phase {
-                            "move" => TouchPhase::Move,
-                            "end" => TouchPhase::End,
-                            _ => TouchPhase::Cancel,
-                        };
-                        let touch = device.touch(&run.views, phase);
-                        if phase != TouchPhase::Move {
-                            device.finger = None;
-                        }
-                        touch
+                }
+                "absent" => {
+                    run.settle(EXPECT_WAIT);
+                    if run.views.shows(arg) {
+                        return failed("still shown".into(), &run);
                     }
-                    _ => return Err(format!("`{line}`: touch start|move|end|cancel").into()),
-                };
-                run.control.dispatch_event(
-                    ROOT,
-                    EventKind::Touch,
-                    EventPayload::Touch(Box::new(touch)),
-                );
-            }
-            "type" | "key" => {
-                let (selector, text) = selector(arg);
-                run.settle(TAP_WAIT);
-                let Some(id) = run.views.find_view(&selector) else {
-                    return failed("no such view".into(), &run);
-                };
-                let key =
-                    |key: &str| EventPayload::Map(vec![("key", PayloadValue::Str(key.to_owned()))]);
-                if step == "key" {
+                }
+                "tap" => {
+                    run.settle(TAP_WAIT);
+                    let Some(id) = run.views.link(arg).or_else(|| run.views.find(arg)) else {
+                        return failed("nothing to press".into(), &run);
+                    };
                     run.control
-                        .dispatch_event(id, EventKind::KeyPress, key(text.trim()));
-                } else {
-                    let value = run
-                        .views
-                        .nodes
-                        .get(&id)
-                        .and_then(|v| v.mounted.props().remove("value"));
-                    let typed = device.typed.entry(id).or_default();
-                    // A value the app set since replaces what was typed.
-                    if typed.1 != value {
-                        typed.0 = value.clone().unwrap_or_default();
-                        typed.1 = value;
-                    }
-                    for c in text.chars() {
-                        typed.0.push(c);
-                        typed.2 += 1;
-                        let caret = PayloadValue::Number(typed.0.encode_utf16().count() as f64);
-                        run.control
-                            .dispatch_event(id, EventKind::KeyPress, key(&c.to_string()));
-                        run.control.dispatch_event(
-                            id,
-                            EventKind::ChangeText,
-                            EventPayload::Text {
-                                text: typed.0.clone(),
-                                count: typed.2,
-                            },
+                        .dispatch_event(id, EventKind::Press, EventPayload::None);
+                }
+                "wait" => {
+                    let ms: u64 = arg.parse().map_err(|_| format!("wait `{arg}`"))?;
+                    run.until(Duration::from_millis(ms), |_| false);
+                }
+                "frame" => {
+                    // The selector may quote a text with spaces (`text:"Taps: 0"`).
+                    let (selector, rest) = selector(arg);
+                    let selector = selector.as_str();
+                    let want: Vec<f32> = rest.split(' ').filter_map(|p| p.parse().ok()).collect();
+                    let [x, y, w, h] = want[..] else {
+                        return Err(
+                            format!("frame `{arg}`: <selector> <x> <y> <width> <height>").into(),
                         );
-                        run.control.dispatch_event(
-                            id,
-                            EventKind::SelectionChange,
-                            EventPayload::Map(vec![("start", caret.clone()), ("end", caret)]),
-                        );
-                    }
-                }
-            }
-            "scroll" => {
-                let (selector, at) = selector(arg);
-                let [x, y] = numbers::<2>(at)
-                    .ok_or_else(|| format!("`{line}`: scroll <selector> <x> <y>"))?;
-                run.settle(TAP_WAIT);
-                let Some(id) = run.views.find_view(&selector) else {
-                    return failed("no such view".into(), &run);
-                };
-                run.control.scroll(id, point(px(x), px(y)), 0);
-                if let Some(view) = run.views.nodes.get_mut(&id) {
-                    view.mounted.scrolled(x, y);
-                }
-            }
-            "origin" => {
-                let (selector, at) = selector(arg);
-                let [x, y] = numbers::<2>(at)
-                    .ok_or_else(|| format!("`{line}`: origin <selector> <x> <y>"))?;
-                let at = |v: &Views| v.find_view(&selector).map(|id| page_origin(v, id));
-                let fits = |v: &Views| {
-                    at(v).is_some_and(|(left, top)| (left - x).abs() < 0.5 && (top - y).abs() < 0.5)
-                };
-                if !run.until(EXPECT_WAIT, fits) {
-                    let what = match at(&run.views) {
-                        Some((left, top)) => format!("at {left} {top}"),
-                        None => "no such view".to_owned(),
                     };
-                    return failed(what, &run);
-                }
-            }
-            "state" => {
-                let (selector, names) = selector(arg);
-                let mut states = 0;
-                for name in names.split_whitespace() {
-                    states |= match name {
-                        "pressed" => state::PRESSED,
-                        "hovered" => state::HOVERED,
-                        "focused" => state::FOCUSED,
-                        "none" => 0,
-                        _ => {
-                            return Err(format!(
-                                "`{line}`: state <selector> pressed|hovered|focused|none..."
-                            )
-                            .into());
-                        }
+                    let at =
+                        |v: &Views| v.find_view(selector).and_then(|id| v.nodes.get(&id)?.frame);
+                    let fits = |v: &Views| {
+                        at(v).is_some_and(|f| {
+                            [f.x - x, f.y - y, f.width - w, f.height - h]
+                                .iter()
+                                .all(|d| d.abs() < 0.5)
+                        })
                     };
-                }
-                let tracks = |v: &Views| {
-                    v.find_view(&selector)
-                        .filter(|id| v.nodes.get(id).is_some_and(|n| n.mounted.tracks(states)))
-                };
-                if !run.until(EXPECT_WAIT, |v| tracks(v).is_some()) {
-                    return failed(format!("the platform does not track `{names}`"), &run);
-                }
-                let id = tracks(&run.views).unwrap();
-                run.control.set_states(id, states);
-            }
-            "keyboard" => {
-                let [height, duration] = numbers::<2>(arg)
-                    .ok_or_else(|| format!("`{line}`: keyboard <height> <duration>"))?;
-                environment.keyboard_height = px(height);
-                environment.keyboard_duration = duration;
-                run.control.set_environment(environment);
-            }
-            "pixelratio" => {
-                let [ratio] = numbers::<1>(arg)
-                    .filter(|[r]| *r > 0.0)
-                    .ok_or_else(|| format!("`{line}`: pixelratio <ratio>"))?;
-                environment.pixel_ratio = ratio;
-                run.control.set_environment(environment);
-            }
-            "statusbar" => {
-                let want = parse_fields(arg).map_err(|e| format!("`{line}`: {e}"))?;
-                if want.is_empty() {
-                    return Err(format!("`{line}`: statusbar <key>=<value>...").into());
-                }
-                let want: Vec<(String, String)> = want
-                    .into_iter()
-                    .map(|(k, f)| {
-                        let v = match f {
-                            Field::Bool(b) => b.to_string(),
-                            Field::Str(s) => s,
-                            Field::Number(n) => values::num(n as f32),
+                    if !run.until(EXPECT_WAIT, fits) {
+                        let what = match at(&run.views) {
+                            Some(f) => {
+                                format!("laid out at {} {} {} {}", f.x, f.y, f.width, f.height)
+                            }
+                            None => "no such view".to_owned(),
                         };
-                        (k, v)
-                    })
-                    .collect();
-                for (key, _) in &want {
-                    if !["foreground", "hidden", "animated"].contains(&key.as_str()) {
-                        return Err(format!("`{line}`: no status bar key `{key}`").into());
+                        return failed(what, &run);
                     }
                 }
-                let read = |v: &Views| v.nodes.get(&ROOT)?.mounted.status_bar();
-                let fits = |v: &Views| {
-                    read(v).is_some_and(|got| {
-                        want.iter()
-                            .all(|(k, v)| got.get(k.as_str()).is_some_and(|g| g == v))
-                    })
-                };
-                if !run.until(EXPECT_WAIT, fits) {
-                    let what = match read(&run.views) {
-                        None => "the platform was told no status bar".to_owned(),
-                        Some(got) => {
-                            let got: Vec<String> =
-                                got.iter().map(|(k, v)| format!("{k}={v}")).collect();
-                            format!("the status bar is {}", got.join(" "))
-                        }
+                "prop" | "style" => {
+                    let (selector, rest) = selector(arg);
+                    let (name, want) = rest
+                        .split_once(' ')
+                        .ok_or_else(|| format!("`{line}`: {step} <selector> <name> <value>"))?;
+                    let (key, want) = (values::key(name), want.trim());
+                    let all = |v: &Views| {
+                        let (m, at) = v.mounted(&selector)?;
+                        Some(if step == "prop" {
+                            m.props()
+                        } else {
+                            m.styles(at)
+                        })
                     };
-                    return failed(what, &run);
+                    let read = |v: &Views| all(v)?.remove(key);
+                    if !run.until(EXPECT_WAIT, |v| read(v).as_deref() == Some(want)) {
+                        let what = match all(&run.views) {
+                            None => "no such view".to_owned(),
+                            Some(all) => {
+                                // What the view has, for writing the step.
+                                let has: Vec<String> =
+                                    all.iter().map(|(k, v)| format!("{k} {v}")).collect();
+                                let got = match all.get(key) {
+                                    None => format!("no {step} `{key}`"),
+                                    Some(got) => format!("`{key}` is `{got}`"),
+                                };
+                                format!("{got}\nthe view's {step}s:\n  {}", has.join("\n  "))
+                            }
+                        };
+                        return failed(what, &run);
+                    }
                 }
+                "noprop" | "nostyle" => {
+                    let (selector, name) = selector(arg);
+                    let key = values::key(name.trim());
+                    run.settle(EXPECT_WAIT);
+                    let Some((m, at)) = run.views.mounted(&selector) else {
+                        return failed("no such view".into(), &run);
+                    };
+                    let (got, unset) = if step == "noprop" {
+                        (m.props().remove(key), m.blank().props().remove(key))
+                    } else {
+                        (m.styles(at).remove(key), m.blank().styles(at).remove(key))
+                    };
+                    if let Some(got) = got.filter(|g| Some(g) != unset.as_ref()) {
+                        return failed(format!("`{key}` is `{got}`"), &run);
+                    }
+                }
+                "drawing" => {
+                    let (selector, want) = selector(arg);
+                    let want = want.trim();
+                    if want.is_empty() {
+                        return Err(format!("`{line}`: drawing <selector> <operation>").into());
+                    }
+                    let ops = |v: &Views| v.drawing_of(&selector);
+                    let has = |v: &Views| {
+                        ops(v).is_some_and(|ops| ops.iter().any(|op| drawing::matches(op, want)))
+                    };
+                    if !run.until(EXPECT_WAIT, has) {
+                        let what = match ops(&run.views) {
+                            None => "no such view".to_owned(),
+                            Some(ops) if ops.is_empty() => "it drew nothing".to_owned(),
+                            // What it draws, for writing the step.
+                            Some(ops) => format!(
+                                "no operation `{want}`\nthe drawing's operations:\n  {}",
+                                ops.join("\n  ")
+                            ),
+                        };
+                        return failed(what, &run);
+                    }
+                }
+                "nodrawing" => {
+                    let (selector, want) = selector(arg);
+                    let want = want.trim();
+                    if want.is_empty() {
+                        return Err(format!("`{line}`: nodrawing <selector> <operation>").into());
+                    }
+                    run.settle(EXPECT_WAIT);
+                    let Some(ops) = run.views.drawing_of(&selector) else {
+                        return failed("no such view".into(), &run);
+                    };
+                    if let Some(op) = ops.iter().find(|op| drawing::matches(op, want)) {
+                        return failed(format!("it draws `{op}`"), &run);
+                    }
+                }
+                "listens" => {
+                    let (selector, event) = selector(arg);
+                    let event = event.trim();
+                    let kinds = event_kinds(event);
+                    if kinds.is_empty() {
+                        return Err(format!("`{line}`: `{event}` is no event").into());
+                    }
+                    let listens = |v: &Views| {
+                        v.mounted(&selector)
+                            .is_some_and(|(m, _)| kinds.iter().any(|&k| m.listens(k)))
+                    };
+                    if !run.until(EXPECT_WAIT, listens) {
+                        return failed(format!("`{event}` not reported"), &run);
+                    }
+                }
+                "log" => {
+                    if !run.poll(EXPECT_WAIT, |r| r.printed(arg)) {
+                        return failed("not printed".into(), &run);
+                    }
+                }
+                "event" => {
+                    let (selector, rest) = selector(arg);
+                    let rest = rest.trim();
+                    let (name, fields) = rest.split_once(' ').unwrap_or((rest, ""));
+                    let kinds = event_kinds(name);
+                    if kinds.is_empty() {
+                        return Err(format!("`{line}`: `{name}` is no event").into());
+                    }
+                    let fields = parse_fields(fields).map_err(|e| format!("`{line}`: {e}"))?;
+                    run.settle(TAP_WAIT);
+                    // The first of the events the name may be that a view
+                    // around reports (`onCancel`: a dialog's, an overlay's).
+                    let found = run.views.find_view(&selector).and_then(|id| {
+                        kinds
+                            .iter()
+                            .find_map(|&k| listener(&run.views, id, k).map(|at| (at, k)))
+                            // The host's messages go to the root whether
+                            // anything listens there or not, as the
+                            // platforms send them.
+                            .or_else(|| {
+                                kinds
+                                    .contains(&EventKind::Host)
+                                    .then(|| (run.views.top_of(id), EventKind::Host))
+                            })
+                    });
+                    let Some((id, kind)) = found else {
+                        return failed(format!("nothing there reports `{name}`"), &run);
+                    };
+                    let payload = event_payload(&run.views, id, kind, fields, &mut device)
+                        .map_err(|e| format!("`{line}`: {e}"))?;
+                    run.control.dispatch_event(id, kind, payload);
+                }
+                "touch" => {
+                    let (phase, rest) = arg.split_once(' ').unwrap_or((arg, ""));
+                    run.settle(TAP_WAIT);
+                    let touch = match phase {
+                        "start" => {
+                            let (selector, at) = selector(rest);
+                            let at = numbers::<2>(at).ok_or_else(|| {
+                                format!("`{line}`: touch start <selector> <x> <y>")
+                            })?;
+                            let Some(target) = run.views.find_view(&selector) else {
+                                return failed("no such view".into(), &run);
+                            };
+                            let path = touch_path(&run.views, target);
+                            if path.is_empty() {
+                                return failed("nothing there listens to touches".into(), &run);
+                            }
+                            device.finger = Some((target, path, at));
+                            device.touch(&run.views, TouchPhase::Start)
+                        }
+                        "move" | "end" | "cancel" => {
+                            let Some(finger) = device.finger.as_mut() else {
+                                return Err(format!("`{line}`: no finger is down").into());
+                            };
+                            if let Some(at) = numbers::<2>(rest) {
+                                finger.2 = at;
+                            } else if phase == "move" || !rest.trim().is_empty() {
+                                return Err(format!("`{line}`: touch {phase} <x> <y>").into());
+                            }
+                            let phase = match phase {
+                                "move" => TouchPhase::Move,
+                                "end" => TouchPhase::End,
+                                _ => TouchPhase::Cancel,
+                            };
+                            let touch = device.touch(&run.views, phase);
+                            if phase != TouchPhase::Move {
+                                device.finger = None;
+                            }
+                            touch
+                        }
+                        _ => return Err(format!("`{line}`: touch start|move|end|cancel").into()),
+                    };
+                    run.control.dispatch_event(
+                        ROOT,
+                        EventKind::Touch,
+                        EventPayload::Touch(Box::new(touch)),
+                    );
+                }
+                "type" | "key" => {
+                    let (selector, text) = selector(arg);
+                    run.settle(TAP_WAIT);
+                    let Some(id) = run.views.find_view(&selector) else {
+                        return failed("no such view".into(), &run);
+                    };
+                    let key = |key: &str| {
+                        EventPayload::Map(vec![("key", PayloadValue::Str(key.to_owned()))])
+                    };
+                    if step == "key" {
+                        run.control
+                            .dispatch_event(id, EventKind::KeyPress, key(text.trim()));
+                    } else {
+                        let value = run
+                            .views
+                            .nodes
+                            .get(&id)
+                            .and_then(|v| v.mounted.props().remove("value"));
+                        let typed = device.typed.entry(id).or_default();
+                        // A value the app set since replaces what was typed.
+                        if typed.1 != value {
+                            typed.0 = value.clone().unwrap_or_default();
+                            typed.1 = value;
+                        }
+                        for c in text.chars() {
+                            typed.0.push(c);
+                            typed.2 += 1;
+                            let caret = PayloadValue::Number(typed.0.encode_utf16().count() as f64);
+                            run.control.dispatch_event(
+                                id,
+                                EventKind::KeyPress,
+                                key(&c.to_string()),
+                            );
+                            run.control.dispatch_event(
+                                id,
+                                EventKind::ChangeText,
+                                EventPayload::Text {
+                                    text: typed.0.clone(),
+                                    count: typed.2,
+                                },
+                            );
+                            run.control.dispatch_event(
+                                id,
+                                EventKind::SelectionChange,
+                                EventPayload::Map(vec![("start", caret.clone()), ("end", caret)]),
+                            );
+                        }
+                    }
+                }
+                "scroll" => {
+                    let (selector, at) = selector(arg);
+                    let [x, y] = numbers::<2>(at)
+                        .ok_or_else(|| format!("`{line}`: scroll <selector> <x> <y>"))?;
+                    run.settle(TAP_WAIT);
+                    let Some(id) = run.views.find_view(&selector) else {
+                        return failed("no such view".into(), &run);
+                    };
+                    run.control.scroll(id, point(px(x), px(y)), 0);
+                    if let Some(view) = run.views.nodes.get_mut(&id) {
+                        view.mounted.scrolled(x, y);
+                    }
+                }
+                "origin" => {
+                    let (selector, at) = selector(arg);
+                    let [x, y] = numbers::<2>(at)
+                        .ok_or_else(|| format!("`{line}`: origin <selector> <x> <y>"))?;
+                    let at = |v: &Views| v.find_view(&selector).map(|id| page_origin(v, id));
+                    let fits = |v: &Views| {
+                        at(v).is_some_and(|(left, top)| {
+                            (left - x).abs() < 0.5 && (top - y).abs() < 0.5
+                        })
+                    };
+                    if !run.until(EXPECT_WAIT, fits) {
+                        let what = match at(&run.views) {
+                            Some((left, top)) => format!("at {left} {top}"),
+                            None => "no such view".to_owned(),
+                        };
+                        return failed(what, &run);
+                    }
+                }
+                "state" => {
+                    let (selector, names) = selector(arg);
+                    let mut states = 0;
+                    for name in names.split_whitespace() {
+                        states |= match name {
+                            "pressed" => state::PRESSED,
+                            "hovered" => state::HOVERED,
+                            "focused" => state::FOCUSED,
+                            "none" => 0,
+                            _ => {
+                                return Err(format!(
+                                    "`{line}`: state <selector> pressed|hovered|focused|none..."
+                                )
+                                .into());
+                            }
+                        };
+                    }
+                    let tracks = |v: &Views| {
+                        v.find_view(&selector)
+                            .filter(|id| v.nodes.get(id).is_some_and(|n| n.mounted.tracks(states)))
+                    };
+                    if !run.until(EXPECT_WAIT, |v| tracks(v).is_some()) {
+                        return failed(format!("the platform does not track `{names}`"), &run);
+                    }
+                    let id = tracks(&run.views).unwrap();
+                    run.control.set_states(id, states);
+                }
+                "keyboard" => {
+                    let [height, duration] = numbers::<2>(arg)
+                        .ok_or_else(|| format!("`{line}`: keyboard <height> <duration>"))?;
+                    environment.keyboard_height = px(height);
+                    environment.keyboard_duration = duration;
+                    run.control.set_environment(environment);
+                }
+                "pixelratio" => {
+                    let [ratio] = numbers::<1>(arg)
+                        .filter(|[r]| *r > 0.0)
+                        .ok_or_else(|| format!("`{line}`: pixelratio <ratio>"))?;
+                    environment.pixel_ratio = ratio;
+                    run.control.set_environment(environment);
+                }
+                "statusbar" => {
+                    let want = parse_fields(arg).map_err(|e| format!("`{line}`: {e}"))?;
+                    if want.is_empty() {
+                        return Err(format!("`{line}`: statusbar <key>=<value>...").into());
+                    }
+                    let want: Vec<(String, String)> = want
+                        .into_iter()
+                        .map(|(k, f)| {
+                            let v = match f {
+                                Field::Bool(b) => b.to_string(),
+                                Field::Str(s) => s,
+                                Field::Number(n) => values::num(n as f32),
+                            };
+                            (k, v)
+                        })
+                        .collect();
+                    for (key, _) in &want {
+                        if !["foreground", "hidden", "animated"].contains(&key.as_str()) {
+                            return Err(format!("`{line}`: no status bar key `{key}`").into());
+                        }
+                    }
+                    let read = |v: &Views| v.nodes.get(&ROOT)?.mounted.status_bar();
+                    let fits = |v: &Views| {
+                        read(v).is_some_and(|got| {
+                            want.iter()
+                                .all(|(k, v)| got.get(k.as_str()).is_some_and(|g| g == v))
+                        })
+                    };
+                    if !run.until(EXPECT_WAIT, fits) {
+                        let what = match read(&run.views) {
+                            None => "the platform was told no status bar".to_owned(),
+                            Some(got) => {
+                                let got: Vec<String> =
+                                    got.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                                format!("the status bar is {}", got.join(" "))
+                            }
+                        };
+                        return failed(what, &run);
+                    }
+                }
+                "covers" => return Ok(()),
+                other => return Err(format!("unknown step `{other}`").into()),
             }
-            "covers" => continue,
-            other => return Err(format!("unknown step `{other}`").into()),
+            if dump {
+                run.settle(EXPECT_WAIT);
+                let now = run.views.texts();
+                let added: Vec<_> = now.iter().filter(|t| !shown.contains(t)).collect();
+                let gone: Vec<_> = shown.iter().filter(|t| !now.contains(t)).collect();
+                println!("{line}\n  + {added:?}\n  - {gone:?}");
+                shown = now;
+            }
+            if !run.errors().is_empty() {
+                return failed("the app reported errors".into(), &run);
+            }
+            Ok(())
+        };
+        if let Err(failure) = step_run() {
+            if !keep_going {
+                return Err(failure);
+            }
+            failures.push(failure);
+            skipping = true;
         }
-        if dump {
-            run.settle(EXPECT_WAIT);
-            let now = run.views.texts();
-            let added: Vec<_> = now.iter().filter(|t| !shown.contains(t)).collect();
-            let gone: Vec<_> = shown.iter().filter(|t| !now.contains(t)).collect();
-            println!("{line}\n  + {added:?}\n  - {gone:?}");
-            shown = now;
-        }
-        if !run.errors().is_empty() {
-            return failed("the app reported errors".into(), &run);
-        }
+    }
+    if let Some(first) = failures.first() {
+        // The first failure's check, so the claims of `covers` read as
+        // without the mode.
+        return Err(Failure {
+            check: first.check.clone(),
+            errors: first.errors,
+            message: failures
+                .iter()
+                .map(|f| f.message.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        });
     }
     run.settle(EXPECT_WAIT);
     match run.errors() {
@@ -1236,8 +1323,12 @@ fn event_payload(
     let keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
     let only = |want: &[&str]| keys.len() == want.len() && want.iter().all(|k| keys.contains(k));
     Ok(match kind {
-        // Both payloads are a position and the modifiers.
-        EventKind::HoverMove | EventKind::ContextMenu => {
+        // The mouse's payloads and a context menu's are a position and
+        // the modifiers.
+        EventKind::MouseEnter
+        | EventKind::MouseMove
+        | EventKind::MouseLeave
+        | EventKind::ContextMenu => {
             let (left, top) = page_origin(views, id);
             // The keys as handlers read them (`position.x`, `modifiers.shift`),
             // or as scripts written before v0.1.2 name them (`locationX`,
@@ -1261,12 +1352,25 @@ fn event_payload(
                 shift: flag("modifiers.shift", "shiftKey"),
                 cmd: flag("modifiers.platform", "metaKey"),
             };
-            if kind == EventKind::HoverMove {
-                EventPayload::Hover(HoverEvent {
-                    position: point(px(location_x), px(location_y)),
-                    page_position: point(px(page_x), px(page_y)),
+            if kind != EventKind::ContextMenu {
+                // The button held down in a drag, as handlers name it.
+                let pressed = match get("pressedButton") {
+                    Some(Field::Str(b)) => match b.as_str() {
+                        "left" => Some(MouseButton::Left),
+                        "right" => Some(MouseButton::Right),
+                        "middle" => Some(MouseButton::Middle),
+                        "back" => Some(MouseButton::Back),
+                        "forward" => Some(MouseButton::Forward),
+                        other => return Err(format!("no mouse button `{other}`")),
+                    },
+                    _ => None,
+                };
+                EventPayload::Mouse(MouseEvent::new(
+                    point(px(location_x), px(location_y)),
+                    point(px(page_x), px(page_y)),
                     modifiers,
-                })
+                    pressed,
+                ))
             } else {
                 EventPayload::ContextMenu(ContextMenuEvent {
                     position: point(px(location_x), px(location_y)),
@@ -1277,9 +1381,13 @@ fn event_payload(
         }
         _ if fields.is_empty() => EventPayload::None,
         EventKind::ChangeText => {
-            let Some(Field::Str(text)) = get("text") else {
-                return Err("onChange takes text=<string>".into());
+            // A number a script writes is the digits typed.
+            let text = match get("text") {
+                Some(Field::Str(text)) => text.clone(),
+                Some(Field::Number(n)) => n.to_string(),
+                _ => return Err("onChange takes text=<string>".into()),
             };
+            let text = &text;
             let typed = device.typed.entry(id).or_default();
             typed.0 = text.clone();
             typed.2 += 1;
@@ -1319,6 +1427,17 @@ fn event_payload(
                 px(num("x").unwrap_or(0.0)),
                 px(num("y").unwrap_or(0.0)),
             ))
+        }
+        // The return key: the input's text, as the platforms send it
+        // (a number a script writes is the digits typed).
+        EventKind::SubmitEditing if only(&["text"]) => {
+            let text = match get("text") {
+                Some(Field::Str(text)) => text.clone(),
+                Some(Field::Number(n)) => n.to_string(),
+                _ => return Err("onSubmit takes text=<string>".into()),
+            };
+            let count = device.typed.get(&id).map_or(0, |typed| typed.2);
+            EventPayload::Text { text, count }
         }
         EventKind::Load if only(&["width", "height"]) => EventPayload::Image(Size::new(
             DevicePixels(num("width").unwrap_or(0.0) as i32),

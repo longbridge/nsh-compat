@@ -153,9 +153,9 @@ struct Place {
     env: ClassEnvironment,
     window: (f32, f32),
     rtl: bool,
-    states: u8,
+    states: u16,
     position: u8,
-    group: Option<(&'static str, u8)>,
+    group: Option<(&'static str, u16)>,
 }
 
 fn places() -> Vec<Place> {

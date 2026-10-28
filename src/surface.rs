@@ -177,7 +177,7 @@ fn sorted(out: &mut String, text: &str) {
 pub(crate) fn types() -> Vec<(String, String)> {
     // `nsh/base` with its submodules (`nsh/base/plot`).
     let base = nsh_base::registry();
-    let sets: Vec<nsh_core::ui::description::SetDescription> =
+    let sets: Vec<nsh_core::element::description::SetDescription> =
         base.sets().into_iter().map(Into::into).collect();
     let mut files = nsh_js::type_definitions(&sets);
     files.retain(|(path, _)| path != "standard/llrt-sources.d.ts");

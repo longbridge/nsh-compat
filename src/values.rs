@@ -39,8 +39,8 @@ use nsh_core::{
     InputConfig, KeyboardDismissMode, KeyboardTaps, Keyframes, ModalConfig, MountItem, NativeProps,
     ResizeMode, ResolvedTextStyle, ScreenConfig, ScrollBehavior, TextAlign, TextTransform,
     TransformKind, VideoProps, ViewKind, ViewProps, ViewStyle, WebProps, WebSource,
+    element::PropEnum,
     geometry::{DefiniteLength, Percentage, Points, REM_SIZE},
-    ui::PropEnum,
 };
 
 /// The platforms whose props are written `<platform>.<name>` in scripts as
@@ -66,7 +66,7 @@ pub(crate) struct Mounted {
     native: Option<NativeProps>,
     /// The interaction states the platform reports
     /// ([`MountItem::TrackStates`]; bits of `nsh_core::tailwind::state`).
-    tracked: u8,
+    tracked: u16,
     /// A canvas's latest drawing ([`MountItem::Canvas`]), as
     /// [`Mounted::drawing`] writes it.
     drawing: Option<Arc<nsh_core::canvas::Drawing>>,
@@ -160,7 +160,7 @@ impl Mounted {
 
     /// Whether the platform reports all the interaction states `states`
     /// (bits of `nsh_core::tailwind::state`) of the view.
-    pub(crate) fn tracks(&self, states: u8) -> bool {
+    pub(crate) fn tracks(&self, states: u16) -> bool {
         self.tracked & states == states
     }
 
@@ -243,8 +243,8 @@ impl Mounted {
         if let Some(v) = p.focusable {
             out.put("focusable", v.to_string());
         }
-        if p.selection_area {
-            out.put("selectionArea", "true".into());
+        if p.selectable_view {
+            out.put("selectableView", "true".into());
         }
         let style = self.style.as_deref().cloned().unwrap_or_default();
         out.put("elevation", num(style.elevation));
@@ -1308,6 +1308,11 @@ impl Mounted {
 
     /// The operations of the canvas's latest drawing, as drawing.rs writes
     /// them; none until it drew (or for a view that is no canvas).
+    /// Whether a canvas drew here.
+    pub(crate) fn draws(&self) -> bool {
+        self.drawing.is_some()
+    }
+
     pub(crate) fn drawing(&self) -> Vec<String> {
         self.drawing
             .as_deref()

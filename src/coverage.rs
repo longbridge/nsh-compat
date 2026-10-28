@@ -75,8 +75,8 @@ const PRIMITIVES: &[(&str, &str, Option<&str>)] = &[
     ("nsh", "View", Some("view")),
     ("nsh", "Text", Some("text")),
     ("nsh", "Scroll", Some("scroll")),
-    ("nsh", "Input", Some("input")),
     ("nsh", "Overlay", Some("overlay")),
+    ("nsh", "Shader", Some("shader")),
     ("nsh", "Image", Some("image")),
     ("nsh", "WebView", Some("webview")),
     ("nsh", "Video", Some("video")),
@@ -85,6 +85,7 @@ const PRIMITIVES: &[(&str, &str, Option<&str>)] = &[
     ("nsh/webview", "WebView", Some("webview")),
     ("nsh/video", "Video", Some("video")),
     ("nsh/list", "List", None),
+    ("nsh/base", "Input", Some("input")),
 ];
 
 /// The prefixes of a platform's props interfaces and the prop that holds
