@@ -41,6 +41,17 @@
 //!   selector `span:<text>` names the first text that contains `<text>`,
 //!   and its text keys are those of the run where `<text>` starts (nested
 //!   `<Text>`s);
+//! - `drawing <selector> <operation>`: the latest drawing of the canvas
+//!   the selector names (what the platform was last told to draw: its
+//!   `draw`, or what a component draws, with the view's paint styles
+//!   `fill`, `stroke`, `strokeWidth` and `strokeDasharray` applied) has an
+//!   operation that reads `<operation>` (the rest of the line), written as
+//!   compat/drawing.rs says: `strokeStyle #ff0000ff`, `setLineDash 4 2`,
+//!   `fillRect 0 0 20 10`; an `<operation>` ending in `...` is any that
+//!   starts with what comes before (`fillText "Q1"...`). Waits for it;
+//! - `nodrawing <selector> <operation>`: no operation of that drawing
+//!   reads `<operation>` (after the app is quiet; a canvas that drew
+//!   nothing has none);
 //! - `listens <selector> <event>`: the platform reports event `<event>`
 //!   (`onPress`, ...) of the view, so its handler is set (waits for it);
 //! - `log <text>`: the app printed a `console` line (any level) containing
@@ -132,7 +143,10 @@ use nsh_core::{
 };
 use nsh_engine::{Assets, Bundle, Engine, EngineConfig, EngineControl, MountSink};
 
-use super::values::{self, Mounted};
+use super::{
+    drawing,
+    values::{self, Mounted},
+};
 
 /// The surface's root view.
 const ROOT: NodeId = 1;
@@ -769,6 +783,43 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                 };
                 if let Some(got) = got.filter(|g| Some(g) != unset.as_ref()) {
                     return failed(format!("`{key}` is `{got}`"), &run);
+                }
+            }
+            "drawing" => {
+                let (selector, want) = selector(arg);
+                let want = want.trim();
+                if want.is_empty() {
+                    return Err(format!("`{line}`: drawing <selector> <operation>").into());
+                }
+                let ops = |v: &Views| v.mounted(&selector).map(|(m, _)| m.drawing());
+                let has = |v: &Views| {
+                    ops(v).is_some_and(|ops| ops.iter().any(|op| drawing::matches(op, want)))
+                };
+                if !run.until(EXPECT_WAIT, has) {
+                    let what = match ops(&run.views) {
+                        None => "no such view".to_owned(),
+                        Some(ops) if ops.is_empty() => "it drew nothing".to_owned(),
+                        // What it draws, for writing the step.
+                        Some(ops) => format!(
+                            "no operation `{want}`\nthe drawing's operations:\n  {}",
+                            ops.join("\n  ")
+                        ),
+                    };
+                    return failed(what, &run);
+                }
+            }
+            "nodrawing" => {
+                let (selector, want) = selector(arg);
+                let want = want.trim();
+                if want.is_empty() {
+                    return Err(format!("`{line}`: nodrawing <selector> <operation>").into());
+                }
+                run.settle(EXPECT_WAIT);
+                let Some((m, _)) = run.views.mounted(&selector) else {
+                    return failed("no such view".into(), &run);
+                };
+                if let Some(op) = m.drawing().iter().find(|op| drawing::matches(op, want)) {
+                    return failed(format!("it draws `{op}`"), &run);
                 }
             }
             "listens" => {

@@ -23,6 +23,7 @@
 mod apps;
 mod compare;
 mod coverage;
+mod drawing;
 mod logs;
 mod surface;
 mod tailwind;

@@ -31,8 +31,10 @@
 //! component's prop: the component and the name), and a prop, event or
 //! style key renamed in the bundle makes a check of the script fail (any
 //! step that checks: `expect`, `absent`, `tap`, `frame`, `origin`,
-//! `prop`, `noprop`, `style`, `nostyle`, `listens`, `log`), so the script
-//! sees what it does; a prop a component requires (`NavStack`'s `state`)
+//! `prop`, `noprop`, `style`, `nostyle`, `drawing`, `nodrawing`,
+//! `listens`, `log`), so the script sees what it does (the paint styles
+//! `fill`, `stroke`, `strokeWidth` and `strokeDasharray` show only in what
+//! a canvas draws: a `drawing` step); a prop a component requires (`NavStack`'s `state`)
 //! may make the app fail instead. Exports and globals cannot be taken out of an app that still
 //! runs, so only their use is verified; their claim is the script
 //! author's word that a step checks their result.
