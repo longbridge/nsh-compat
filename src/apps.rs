@@ -299,10 +299,19 @@ impl Views {
         out
     }
 
+    /// The texts on screen: a text laid out to no size is not (the core
+    /// gives a view out of the layout, `display: none` on it or around it,
+    /// a frame of 0 × 0, as a `keepMounted` panel's content while closed).
     fn texts(&self) -> Vec<String> {
         self.attached()
             .iter()
-            .filter_map(|id| self.nodes.get(id)?.text.as_deref())
+            .filter_map(|id| {
+                let view = self.nodes.get(id)?;
+                let no_size = view
+                    .frame
+                    .is_some_and(|f| f.width == 0.0 && f.height == 0.0);
+                (!no_size).then_some(view.text.as_deref()?)
+            })
             .map(|t| t.trim().to_owned())
             .collect()
     }
