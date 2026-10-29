@@ -125,7 +125,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Condvar, LazyLock, Mutex, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
     thread::ThreadId,
@@ -165,6 +165,36 @@ const QUIET: Duration = Duration::from_millis(300);
 /// The display's frame interval: a frame the engine asks for begins this
 /// long after it asked, as at 60 Hz.
 const FRAME: Duration = Duration::from_millis(16);
+
+/// How many apps may be starting at once, as many as the machine has
+/// cores. Starting (loading the bundle, the first render) is what costs;
+/// the steps after it mostly wait, so the runs themselves stay side by
+/// side. With every claim's app starting at once, a large app on a small
+/// machine may not render within a step's wait, and fail for that alone.
+static STARTS: LazyLock<(Mutex<usize>, Condvar)> = LazyLock::new(|| {
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    (Mutex::new(cores), Condvar::new())
+});
+
+/// A turn to start an app, given back when dropped.
+struct StartTurn;
+
+impl StartTurn {
+    fn take() -> StartTurn {
+        let (free, freed) = &*STARTS;
+        let mut free = freed.wait_while(free.lock().unwrap(), |n| *n == 0).unwrap();
+        *free -= 1;
+        StartTurn
+    }
+}
+
+impl Drop for StartTurn {
+    fn drop(&mut self) {
+        let (free, freed) = &*STARTS;
+        *free.lock().unwrap() += 1;
+        freed.notify_one();
+    }
+}
 
 struct Sink {
     batches: Sender<MountBatch>,
@@ -691,6 +721,7 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
     // `keyboard` and `pixelratio` send this one again.
     environment.window = viewport;
     values::animated(None);
+    let turn = StartTurn::take();
     let (bundle, declares) = bundle(code, dir)?;
     // Declared before the run, so dropped after its engine, which may
     // still write there.
@@ -709,6 +740,7 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
             message: format!("the app rendered nothing; errors: {:?}", run.errors()),
         });
     }
+    drop(turn);
     if dump {
         run.settle(EXPECT_WAIT);
         println!("(start)\n  {:?}", run.views.texts());
