@@ -52,6 +52,16 @@
 //! - `nodrawing <selector> <operation>`: no operation of that drawing
 //!   reads `<operation>` (after the app is quiet; a canvas that drew
 //!   nothing has none);
+//! - `animated <selector> <name> <value>`: an animation bound to the
+//!   view the selector names (or, with none bound to it, to the first
+//!   view inside it with one: a component's mark) sets `<name>` on it to
+//!   `<value>` now, the animation graph run as a platform runs it beside
+//!   its views, on the run's clock: `opacity`, `backgroundColor`,
+//!   `borderColor`, `color`, `transform.<i>` (an entry of its transform
+//!   list) or `slot.<i>` (an argument of its canvas's drawing), written as
+//!   `style` and `drawing` write them (waits for it). What settles soon,
+//!   as a hover's fade, is read at its end, and a long animation easing
+//!   in at its start;
 //! - `listens <selector> <event>`: the platform reports event `<event>`
 //!   (`onPress`, ...) of the view, so its handler is set (waits for it);
 //! - `log <text>`: the app printed a `console` line (any level) containing
@@ -430,6 +440,23 @@ impl Views {
         Some((&view.mounted, at))
     }
 
+    /// What the animations bound to the view `selector` names set on it,
+    /// or, when none is, on the first view inside it they are bound to (a
+    /// component's mark wrapped in views of its own, as `drawing_of`).
+    fn animated_of(&self, selector: &str) -> Option<Vec<(String, String)>> {
+        let mut stack = vec![self.find_view(selector)?];
+        while let Some(id) = stack.pop() {
+            let live = values::live(id);
+            if !live.is_empty() {
+                return Some(live);
+            }
+            if let Some(children) = self.children.get(&id) {
+                stack.extend(children.iter().rev());
+            }
+        }
+        Some(Vec::new())
+    }
+
     /// What the view `selector` names draws, or, when it draws nothing of
     /// its own, the first canvas inside it (a component's mark wrapped in
     /// views of its own: a plot's `Area`, a `Pie`'s first slice).
@@ -554,11 +581,12 @@ impl Run {
             if left.is_zero() {
                 return false;
             }
-            match self.rx.recv_timeout(left.min(Duration::from_millis(20))) {
+            match self.rx.recv_timeout(left.min(FRAME)) {
                 Ok(batch) => self.views.apply(&batch),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => panic!("the engine stopped"),
             }
+            self.frame();
         }
     }
 
@@ -567,11 +595,17 @@ impl Run {
         let end = Instant::now() + limit;
         while !done(&self.views) {
             let left = end.saturating_duration_since(Instant::now());
-            match self.rx.recv_timeout(left) {
+            if left.is_zero() {
+                return false;
+            }
+            // A frame at a time: an animation that ends may be what makes
+            // the app change.
+            match self.rx.recv_timeout(left.min(FRAME)) {
                 Ok(batch) => self.views.apply(&batch),
-                Err(RecvTimeoutError::Timeout) => return false,
+                Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => panic!("the engine stopped"),
             }
+            self.frame();
         }
         true
     }
@@ -579,12 +613,31 @@ impl Run {
     /// Applies batches until none came for [`QUIET`] (or `limit` ends).
     fn settle(&mut self, limit: Duration) {
         let end = Instant::now() + limit;
+        let mut last = Instant::now();
         loop {
-            let left = end.saturating_duration_since(Instant::now());
-            match self.rx.recv_timeout(QUIET.min(left)) {
-                Ok(batch) => self.views.apply(&batch),
-                Err(_) => return,
+            let now = Instant::now();
+            if now >= end || now - last >= QUIET {
+                return;
             }
+            let left = (end - now).min(QUIET - (now - last));
+            match self.rx.recv_timeout(left.min(FRAME)) {
+                Ok(batch) => {
+                    self.views.apply(&batch);
+                    last = Instant::now();
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+            self.frame();
+        }
+    }
+
+    /// Runs the animation graph to now and reports the animations that
+    /// ended, as a platform does each frame.
+    fn frame(&self) {
+        let ended = values::tick();
+        if !ended.is_empty() {
+            self.control.animations_finished(ended);
         }
     }
 
@@ -910,6 +963,32 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                     };
                     if let Some(op) = ops.iter().find(|op| drawing::matches(op, want)) {
                         return failed(format!("it draws `{op}`"), &run);
+                    }
+                }
+                "animated" => {
+                    let (selector, rest) = selector(arg);
+                    let (name, want) = rest
+                        .split_once(' ')
+                        .ok_or_else(|| format!("`{line}`: animated <selector> <name> <value>"))?;
+                    let want = want.trim();
+                    let read = |run: &Run| run.views.animated_of(&selector);
+                    let has = |run: &Run| {
+                        read(run).is_some_and(|all| all.iter().any(|(k, v)| k == name && v == want))
+                    };
+                    if !run.poll(EXPECT_WAIT, has) {
+                        let what = match read(&run) {
+                            None => "no such view".to_owned(),
+                            Some(all) if all.is_empty() => "no animation is bound to it".to_owned(),
+                            // What is bound, for writing the step.
+                            Some(all) => format!(
+                                "`{name}` is not `{want}`\nwhat its animations set:\n  {}",
+                                all.iter()
+                                    .map(|(k, v)| format!("{k} {v}"))
+                                    .collect::<Vec<_>>()
+                                    .join("\n  ")
+                            ),
+                        };
+                        return failed(what, &run);
                     }
                 }
                 "listens" => {

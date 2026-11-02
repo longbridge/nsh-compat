@@ -1339,8 +1339,72 @@ pub(crate) fn animated_value(node: nsh_core::animation::NodeId) -> Option<f32> {
     ANIMATED.with(|a| a.borrow().get(&node).copied())
 }
 
-/// Takes in the animated values `item` creates; `None` starts a run.
+thread_local! {
+    /// The animation graph of the run on this thread, as a platform keeps
+    /// it beside its views, and when the run started (the graph's clock).
+    static LIVE: std::cell::RefCell<(nsh_core::animation::Animator, std::time::Instant)> =
+        std::cell::RefCell::new((Default::default(), std::time::Instant::now()));
+}
+
+/// Runs the animation graph of the run on this thread to now, as a
+/// platform does each frame: the animations that ended since the last
+/// call, for the engine (what JS awaits, a plot scope's memory of its
+/// appears).
+pub(crate) fn tick() -> Vec<nsh_core::animation::Finished> {
+    LIVE.with(|l| {
+        let (animator, start) = &mut *l.borrow_mut();
+        animator.tick(start.elapsed().as_secs_f64());
+        std::mem::take(&mut animator.finished)
+    })
+}
+
+/// What the animations bound to view `id` set on it now, as `<name>
+/// <value>` pairs: `opacity`, `backgroundColor`, `borderColor`, `color`,
+/// `transform.<i>` (an entry of its transform list) and `slot.<i>` (an
+/// argument of its canvas's drawing), each written as the style keys and
+/// drawings are.
+pub(crate) fn live(id: nsh_core::NodeId) -> Vec<(String, String)> {
+    LIVE.with(|l| {
+        let (animator, start) = &mut *l.borrow_mut();
+        animator.tick(start.elapsed().as_secs_f64());
+        let mut out = Vec::new();
+        animator.write(
+            |view| (view == id).then_some(()),
+            |(), values, canvas| {
+                let mut put = |name: String, value: String| out.push((name, value));
+                if let Some(v) = values.opacity {
+                    put("opacity".into(), num(v));
+                }
+                if let Some(c) = values.background {
+                    put("backgroundColor".into(), color(c));
+                }
+                if let Some(c) = values.border_color {
+                    put("borderColor".into(), color(c));
+                }
+                if let Some(c) = values.color {
+                    put("color".into(), color(c));
+                }
+                for (i, t) in values.transform.iter().enumerate() {
+                    if let Some(v) = t {
+                        put(format!("transform.{i}"), num(*v));
+                    }
+                }
+                for (k, v) in canvas {
+                    put(format!("slot.{k}"), num(v.number()));
+                }
+            },
+        );
+        out
+    })
+}
+
+/// Takes in the animated values `item` creates and the animations it
+/// starts and binds; `None` starts a run.
 pub(crate) fn animated(item: Option<&MountItem>) {
+    LIVE.with(|l| match item {
+        None => *l.borrow_mut() = (Default::default(), std::time::Instant::now()),
+        Some(item) => l.borrow_mut().0.apply(item),
+    });
     ANIMATED.with(|a| match item {
         None => a.borrow_mut().clear(),
         Some(MountItem::Animation(nsh_core::animation::AnimationOp::CreateValue {
