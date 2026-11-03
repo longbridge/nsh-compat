@@ -95,6 +95,16 @@
 //!   steps typed since;
 //! - `key <selector> <key>`: `onKeyPress` with `key` (`Backspace`,
 //!   `Enter`, ...), the text unchanged;
+//! - `key <keys>`: a hardware keyboard's keystroke (`nsh test`'s
+//!   `keyboard.press`), written as `nsh/keymap` writes them (`mod+k`,
+//!   `shift+tab`, `down`, `escape`; `mod` is the platform's command key),
+//!   on every platform: the newest binding of the app's keymap
+//!   (`keymap.bind`, and the keys a focused control binds: a tree's or a
+//!   carousel's arrows) that fires where the focus is hears it
+//!   (`onKeyCommand`); a key no binding takes reaches nothing. A control
+//!   is focused by `event <selector> onFocus`, as the platform reports it;
+//!   while an input has the focus (the app's `focus()`, or an `onFocus`
+//!   step), only the bindings that fire while editing do;
 //! - `scroll <selector> <x> <y>`: the scroll view the selector names
 //!   scrolled to content offset `<x> <y>` (`onScroll` then reports it,
 //!   with the sizes the core knows, and its `contentOffset` reads it);
@@ -153,11 +163,11 @@ use std::{
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use nsh_core::{
-    ApproxTextEngine, ContextMenuEvent, EventKind, EventPayload, MountBatch, MountItem,
+    ApproxTextEngine, Command, ContextMenuEvent, EventKind, EventPayload, MountBatch, MountItem,
     MouseButton, MouseEvent, NodeId, PayloadValue, Points, PressEvent, Size, TextLink, TouchEvent,
     TouchPhase, TouchPoint,
     geometry::{DevicePixels, point, px},
-    keymap::Modifiers,
+    keymap::{KeyMatch, Keymap, Keystroke, Modifiers},
     platform::{Environment, Idiom, Os},
     tailwind::state,
 };
@@ -257,6 +267,12 @@ impl Assets for AppAssets {
 struct Views {
     nodes: HashMap<NodeId, View>,
     children: HashMap<NodeId, Vec<NodeId>>,
+    /// The app's keyboard shortcuts (`nsh/keymap`, the keys a focused
+    /// control binds): the surface's last `Keymap`.
+    keymap: Option<Arc<Keymap>>,
+    /// The view with the keyboard focus: an input the app focused, or a
+    /// view an `event` step reported focused.
+    focus: Option<NodeId>,
 }
 
 #[derive(Default)]
@@ -298,7 +314,21 @@ impl Views {
                     self.detach(*id);
                     self.nodes.remove(id);
                     self.children.remove(id);
+                    if self.focus == Some(*id) {
+                        self.focus = None;
+                    }
                 }
+                MountItem::Keymap(keymap) => self.keymap = Some(keymap.clone()),
+                // The app's `focus()` and `blur()` (on the root, of
+                // whatever has the focus), as the platforms apply them.
+                MountItem::Command {
+                    id,
+                    command: Command::Focus,
+                } if self.is_input(*id) => self.focus = Some(*id),
+                MountItem::Command {
+                    id,
+                    command: Command::Blur,
+                } if *id == ROOT || self.focus == Some(*id) => self.focus = None,
                 MountItem::Events { id, events } => {
                     self.nodes.entry(*id).or_default().pressable =
                         events.contains(EventKind::Press);
@@ -331,6 +361,33 @@ impl Views {
         {
             siblings.retain(|s| *s != id);
         }
+    }
+
+    fn is_input(&self, id: NodeId) -> bool {
+        self.nodes.get(&id).is_some_and(|v| v.mounted.is_input())
+    }
+
+    /// The platform reported view `id` focused or blurred (an `event`
+    /// step's `onFocus` / `onBlur`).
+    fn focused(&mut self, id: NodeId, focused: bool) {
+        if focused {
+            self.focus = Some(id);
+        } else if self.focus == Some(id) {
+            self.focus = None;
+        }
+    }
+
+    /// What a hardware keyboard's `keystroke` does with the app's keymap,
+    /// as the platforms look it up: the newest binding of it that fires
+    /// where the focus is (while an input on screen has it, only those
+    /// that fire while editing).
+    fn key_match(&self, keystroke: Keystroke) -> KeyMatch {
+        let editing = self
+            .focus
+            .is_some_and(|id| self.is_input(id) && self.shown().contains(&id));
+        self.keymap
+            .as_ref()
+            .map_or(KeyMatch::None, |k| k.find(keystroke, editing, false))
     }
 
     /// The views attached below the root, in tree order.
@@ -833,6 +890,7 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
     // Declared before the run, so dropped after its engine, which may
     // still write there.
     let data = declares.then(DataDir::new);
+    let os = environment.os;
     let mut run = Run::start(
         bundle,
         viewport,
@@ -1108,6 +1166,12 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                     let payload = event_payload(&run.views, id, kind, fields, &mut device)
                         .map_err(|e| format!("`{line}`: {e}"))?;
                     run.control.dispatch_event(id, kind, payload);
+                    // The keys a control binds while focused follow.
+                    match kind {
+                        EventKind::Focus => run.views.focused(id, true),
+                        EventKind::Blur => run.views.focused(id, false),
+                        _ => {}
+                    }
                 }
                 "touch" => {
                     let (phase, rest) = arg.split_once(' ').unwrap_or((arg, ""));
@@ -1155,6 +1219,21 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                         EventKind::Touch,
                         EventPayload::Touch(Box::new(touch)),
                     );
+                }
+                // `key <keys>`: a hardware keyboard's keystroke, for the
+                // app's keymap.
+                "key" if !is_selector(arg) => {
+                    let keys = arg.trim();
+                    let stroke = Keystroke::parse(keys, os)
+                        .map_err(|e| format!("`{line}`: key <keys>: {e}"))?;
+                    run.settle(TAP_WAIT);
+                    if let KeyMatch::Fire(id) = run.views.key_match(stroke) {
+                        run.control.dispatch_event(
+                            ROOT,
+                            EventKind::KeyCommand,
+                            EventPayload::Value(PayloadValue::Number(f64::from(id))),
+                        );
+                    }
                 }
                 "type" | "key" => {
                     let (selector, text) = selector(arg);
@@ -1378,6 +1457,17 @@ fn selector(arg: &str) -> (String, &str) {
         Some((selector, rest)) => (selector.to_owned(), rest),
         None => (arg.to_owned(), ""),
     }
+}
+
+/// Whether `arg`'s first word is a selector (`id:`, `label:`, ...), not a
+/// keystroke.
+fn is_selector(arg: &str) -> bool {
+    let word = arg.split_whitespace().next().unwrap_or("");
+    [
+        "id:", "label:", "text:", "span:", "scroll:", "parent:", "below:",
+    ]
+    .iter()
+    .any(|p| word.starts_with(p))
 }
 
 /// What the steps that stand in for the platform's input keep between
@@ -1881,6 +1971,75 @@ mod tests {
             device.press(&views, 4, 4),
             EventPayload::Press(PressEvent { clicks: 2, .. })
         ));
+    }
+
+    #[test]
+    fn keys_reach_the_newest_binding_that_fires_where_the_focus_is() {
+        use nsh_core::keymap::{KeyBinding, When};
+
+        let stroke = |keys: &str| Keystroke::parse(keys, Os::MacOs).unwrap();
+        let binding =
+            |id: u32, keys: &str, when: When| KeyBinding::new(id, stroke(keys), when, false);
+        let mut views = list();
+        // No keymap yet: no key fires.
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::None);
+        views.apply(&MountBatch {
+            items: vec![
+                create(12, ViewKind::Input),
+                insert(ROOT, 12),
+                MountItem::Keymap(Arc::new(Keymap::new(vec![
+                    binding(1, "mod+k", When::Auto),
+                    binding(3, "down", When::NotEditing),
+                    // A focused control's arrows, bound after the app's.
+                    binding(5, "down", When::NotEditing),
+                ]))),
+            ],
+        });
+        assert_eq!(views.key_match(stroke("mod+k")), KeyMatch::Fire(1));
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(5));
+        assert_eq!(views.key_match(stroke("up")), KeyMatch::None);
+
+        // An input focused by the app edits: only what fires while editing.
+        views.apply(&MountBatch {
+            items: vec![MountItem::Command {
+                id: 12,
+                command: Command::Focus,
+            }],
+        });
+        assert_eq!(views.key_match(stroke("mod+k")), KeyMatch::Fire(1));
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::None);
+        // Blurred on the root, then focused and blurred as reported.
+        views.apply(&MountBatch {
+            items: vec![MountItem::Command {
+                id: ROOT,
+                command: Command::Blur,
+            }],
+        });
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(5));
+        views.focused(12, true);
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::None);
+        views.focused(8, false);
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::None);
+        views.focused(12, false);
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(5));
+        // A view that is no input holds the focus without editing.
+        views.focused(8, true);
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(5));
+
+        // The control's keys go with its focus: the keymap is replaced.
+        views.apply(&MountBatch {
+            items: vec![MountItem::Keymap(Arc::new(Keymap::new(vec![binding(
+                3,
+                "down",
+                When::NotEditing,
+            )])))],
+        });
+        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(3));
+
+        assert!(is_selector("id:tree down"));
+        assert!(is_selector("text:\"A b\" Enter"));
+        assert!(!is_selector("mod+k"));
+        assert!(!is_selector("escape"));
     }
 
     #[test]

@@ -1285,6 +1285,11 @@ impl Mounted {
         self.kind == Some(ViewKind::Scroll)
     }
 
+    /// Whether the view is a text input.
+    pub(crate) fn is_input(&self) -> bool {
+        self.kind == Some(ViewKind::Input)
+    }
+
     /// Whether neither the view nor what it holds shows
     /// (`visibility: hidden`, as a list's spare cells are).
     pub(crate) fn hidden(&self) -> bool {
