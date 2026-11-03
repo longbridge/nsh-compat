@@ -1369,6 +1369,21 @@ pub(crate) fn tick() -> Vec<nsh_core::animation::Finished> {
     })
 }
 
+/// The user scrolled view `id` to `x`, `y` and let go (a script's `scroll`
+/// step), as a platform tells the graph beside its views: the value bound
+/// to the view's offset follows it, and the snapping values that follow
+/// that settle, the view at rest.
+pub(crate) fn scrolled(id: nsh_core::NodeId, x: f32, y: f32) {
+    LIVE.with(|l| {
+        let (animator, start) = &mut *l.borrow_mut();
+        animator.tick(start.elapsed().as_secs_f64());
+        let at = nsh_core::geometry::point(nsh_core::geometry::px(x), nsh_core::geometry::px(y));
+        if animator.scrolled(id, at) {
+            animator.scroll_ended(id);
+        }
+    });
+}
+
 /// What the animations bound to view `id` set on it now, as `<name>
 /// <value>` pairs: `opacity`, `backgroundColor`, `borderColor`, `color`,
 /// `transform.<i>` (an entry of its transform list) and `slot.<i>` (an
