@@ -23,7 +23,11 @@
 //!   pressable ancestor (as `nsh test`'s `press`); `span:<text>` presses
 //!   the innermost pressable span (a nested `<Text>` with `onPress`, a
 //!   link) where `<text>` starts in the first text that contains it, else
-//!   the text's nearest pressable ancestor;
+//!   the text's nearest pressable ancestor. The press carries where it
+//!   is (the view's center, in it and on the surface; a span's in its
+//!   text's view) and its click count: a `tap` right after a `tap` of the
+//!   same view counts up (two in a row are a double click, as `nsh test`'s
+//!   `press` twice), any other step between starts again at 1;
 //! - `wait <ms>`: lets timers and animations run;
 //! - `frame <selector> <x> <y> <width> <height>`: the first view on screen
 //!   the selector names (itself, pressable or not) is laid out at that
@@ -150,8 +154,8 @@ use std::{
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use nsh_core::{
     ApproxTextEngine, ContextMenuEvent, EventKind, EventPayload, MountBatch, MountItem,
-    MouseButton, MouseEvent, NodeId, PayloadValue, Points, Size, TextLink, TouchEvent, TouchPhase,
-    TouchPoint,
+    MouseButton, MouseEvent, NodeId, PayloadValue, Points, PressEvent, Size, TextLink, TouchEvent,
+    TouchPhase, TouchPoint,
     geometry::{DevicePixels, point, px},
     keymap::Modifiers,
     platform::{Environment, Idiom, Os},
@@ -862,8 +866,13 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                 continue;
             }
             skipping = false;
+            device.last_press = None;
         }
         let (step, arg) = line.split_once(' ').unwrap_or((line, ""));
+        // Only a `tap` right after a `tap` counts up its clicks.
+        if step != "tap" {
+            device.last_press = None;
+        }
         let failed = |what: String, run: &Run| {
             let errors = run.errors();
             Err(Failure {
@@ -891,11 +900,18 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                 }
                 "tap" => {
                     run.settle(TAP_WAIT);
-                    let Some(id) = run.views.link(arg).or_else(|| run.views.find(arg)) else {
+                    let link = run.views.link(arg);
+                    let Some(id) = link.or_else(|| run.views.find(arg)) else {
                         return failed("nothing to press".into(), &run);
                     };
-                    run.control
-                        .dispatch_event(id, EventKind::Press, EventPayload::None);
+                    // A span has no frame of its own: the press is in its
+                    // text's view.
+                    let at = match link {
+                        Some(_) => run.views.find_shown(arg).unwrap_or(id),
+                        None => id,
+                    };
+                    let payload = device.press(&run.views, id, at);
+                    run.control.dispatch_event(id, EventKind::Press, payload);
                 }
                 "wait" => {
                     let ms: u64 = arg.parse().map_err(|_| format!("wait `{arg}`"))?;
@@ -1377,9 +1393,37 @@ struct Device {
     /// Per input: its text, the value the app had set when it was read,
     /// and the edits reported.
     typed: HashMap<NodeId, (String, Option<String>, u32)>,
+    /// The view the previous step pressed (a `tap`) and its clicks so far.
+    last_press: Option<(NodeId, u32)>,
 }
 
 impl Device {
+    /// The payload of a press of `id` at the center of view `at` (itself,
+    /// or the text a pressed span is in), with its click count: a press of
+    /// the view the previous step pressed counts up (2 is a double click),
+    /// as presses within the platforms' double-click time do (`nsh test`'s
+    /// `press` twice). Counted by the script's steps, not by the time
+    /// between them, which waits for the app first. No payload for a view
+    /// with no frame, as `nsh test` sends none.
+    fn press(&mut self, views: &Views, id: NodeId, at: NodeId) -> EventPayload {
+        let clicks = match self.last_press {
+            Some((last, clicks)) if last == id => clicks + 1,
+            _ => 1,
+        };
+        self.last_press = Some((id, clicks));
+        let Some(frame) = views.nodes.get(&at).and_then(|v| v.frame) else {
+            return EventPayload::None;
+        };
+        let (left, top) = page_origin(views, at);
+        let (x, y) = (frame.width / 2.0, frame.height / 2.0);
+        EventPayload::Press(PressEvent {
+            position: point(px(x), px(y)),
+            page_position: point(px(left + x), px(top + y)),
+            modifiers: Modifiers::default(),
+            clicks,
+        })
+    }
+
     /// The finger's touch event of `phase`.
     fn touch(&mut self, views: &Views, phase: TouchPhase) -> TouchEvent {
         let (target, path, [x, y]) = self.finger.clone().expect("a finger down");
@@ -1785,6 +1829,58 @@ mod tests {
             ],
         });
         views
+    }
+
+    fn frame(id: NodeId, x: f32, y: f32, width: f32, height: f32) -> MountItem {
+        MountItem::Frame {
+            id,
+            frame: nsh_core::Bounds::new(point(px(x), px(y)), Size::new(px(width), px(height))),
+        }
+    }
+
+    /// The click count and where a press is (in the view, on the surface).
+    fn pressed(payload: EventPayload) -> (u32, [f32; 2], [f32; 2]) {
+        let EventPayload::Press(e) = payload else {
+            panic!("no press payload: {payload:?}");
+        };
+        (
+            e.clicks,
+            [e.position.x.0, e.position.y.0],
+            [e.page_position.x.0, e.page_position.y.0],
+        )
+    }
+
+    #[test]
+    fn taps_in_a_row_on_one_view_count_up_their_clicks() {
+        let mut views = list();
+        views.apply(&MountBatch {
+            items: vec![
+                frame(2, 0.0, 100.0, 390.0, 400.0),
+                frame(8, 10.0, 20.0, 200.0, 40.0),
+                frame(4, 0.0, 0.0, 200.0, 40.0),
+            ],
+        });
+        let mut device = Device::default();
+        // A press is at the view's center, in it and on the surface.
+        assert_eq!(
+            pressed(device.press(&views, 8, 8)),
+            (1, [100.0, 20.0], [110.0, 140.0])
+        );
+        // The same view again: a double click, then a triple.
+        assert_eq!(pressed(device.press(&views, 8, 8)).0, 2);
+        assert_eq!(pressed(device.press(&views, 8, 8)).0, 3);
+        // Another view starts again, and so does a step between.
+        assert_eq!(pressed(device.press(&views, 4, 4)).0, 1);
+        device.last_press = None;
+        assert_eq!(pressed(device.press(&views, 4, 4)).0, 1);
+        // A span is pressed in its text's view; with no frame, no payload,
+        // but the click still counts.
+        assert_eq!(pressed(device.press(&views, 99, 4)).0, 1);
+        assert!(matches!(device.press(&views, 4, 6), EventPayload::None));
+        assert!(matches!(
+            device.press(&views, 4, 4),
+            EventPayload::Press(PressEvent { clicks: 2, .. })
+        ));
     }
 
     #[test]
