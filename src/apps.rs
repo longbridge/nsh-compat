@@ -1732,8 +1732,10 @@ mod tests {
     }
 
     fn hidden(id: NodeId, hidden: bool) -> MountItem {
-        let mut style = ViewStyle::default();
-        style.hidden = hidden;
+        let style = ViewStyle {
+            hidden,
+            ..Default::default()
+        };
         MountItem::ViewStyle {
             id,
             style: Box::new(style),
@@ -1741,8 +1743,10 @@ mod tests {
     }
 
     fn test_id(id: NodeId, value: &str) -> MountItem {
-        let mut props = ViewProps::default();
-        props.test_id = Some(value.into());
+        let props = ViewProps {
+            test_id: Some(value.into()),
+            ..Default::default()
+        };
         MountItem::ViewProps {
             id,
             props: Box::new(props),
