@@ -1333,6 +1333,12 @@ impl Mounted {
         props.focus_stop(self.listens(EventKind::Press))
     }
 
+    /// An input's configuration as the platform was last told it (the
+    /// defaults until it was).
+    pub(crate) fn input_config(&self) -> InputConfig {
+        self.input.as_deref().cloned().unwrap_or_default()
+    }
+
     /// Whether the view is a text input.
     pub(crate) fn is_input(&self) -> bool {
         self.kind == Some(ViewKind::Input)
@@ -1429,6 +1435,19 @@ pub(crate) fn scrolled(id: nsh_core::NodeId, x: f32, y: f32) {
         if animator.scrolled(id, at) {
             animator.scroll_ended(id);
         }
+    });
+}
+
+/// The app scrolled view `id` to `x`, `y` (`scrollTo()`, `scrollToEnd()`),
+/// as a platform tells the graph beside its views after a batch (`nsh
+/// test`'s): the value bound to the view's offset follows it; nothing
+/// settles, as no finger let go.
+pub(crate) fn moved(id: nsh_core::NodeId, x: f32, y: f32) {
+    LIVE.with(|l| {
+        let (animator, start) = &mut *l.borrow_mut();
+        animator.tick(start.elapsed().as_secs_f64());
+        let at = nsh_core::geometry::point(nsh_core::geometry::px(x), nsh_core::geometry::px(y));
+        animator.scrolled(id, at);
     });
 }
 

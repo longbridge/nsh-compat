@@ -44,7 +44,9 @@ The tests:
   `closed.txt`;
 - `released_apps_run`: every app each release built still starts and does what its script says.
 
-`NSH_COMPAT_APP=<name>` runs one app, `NSH_COMPAT_DUMP=1` prints the texts each step of a script adds and removes.
+`NSH_COMPAT_APP=<name>` runs one app, `NSH_COMPAT_DUMP=1` prints the texts each step of a script adds and removes,
+`NSH_COMPAT_KEEP_GOING=1` goes on after a failed step at the script's next case (its next `tap id:case-…`) and reports
+the first failure of each case at the end, so one run shows every case that fails.
 
 ## Changing it
 
