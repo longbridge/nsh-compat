@@ -1676,18 +1676,21 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                 Some("web") => Os::Web,
                 _ => {
                     return Err(format!(
-                        "`{line}`: platform ios|android|macos|windows|linux|web [desktop]"
+                        "`{line}`: platform ios|android|macos|windows|linux|web [desktop|terminal]"
                     )
                     .into());
                 }
             };
-            let desktop = match words.next() {
-                None => environment.os.is_desktop(),
-                Some("desktop") => true,
-                Some(other) => return Err(format!("`{line}`: `{other}`, not `desktop`").into()),
-            };
-            if desktop {
-                environment.idiom = Idiom::Desktop;
+            match words.next() {
+                None if environment.os.is_desktop() => environment.idiom = Idiom::Desktop,
+                None => {}
+                Some("desktop") => environment.idiom = Idiom::Desktop,
+                Some("terminal") => environment.idiom = Idiom::Terminal,
+                Some(other) => {
+                    return Err(
+                        format!("`{line}`: `{other}`, not `desktop` or `terminal`").into()
+                    );
+                }
             }
         } else if let Some(scale) = line.strip_prefix("fontscale ") {
             environment.font_scale = scale
