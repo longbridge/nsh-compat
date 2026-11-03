@@ -208,6 +208,7 @@ impl Mounted {
         );
         o.flag("busy", s.busy);
         o.opt("expanded", s.expanded.map(|e| e.to_string()));
+        o.flag("hasPopup", s.has_popup);
         out.put("accessibilityState", o.done());
         if let Some(v) = &a.value {
             let mut o = Object::default();
