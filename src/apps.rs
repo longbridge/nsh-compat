@@ -187,6 +187,11 @@ const ROOT: NodeId = 1;
 /// How long an `expect` waits for its text.
 const EXPECT_WAIT: Duration = Duration::from_secs(5);
 
+/// How long a run waits for the app's first views: a large app (the
+/// gallery) evaluates its bundle for seconds on a busy machine, with as
+/// many apps starting at once as it has cores.
+const START_WAIT: Duration = Duration::from_secs(30);
+
 /// How long a `tap` waits at most for the app to be quiet first (a ticking
 /// app never is).
 const TAP_WAIT: Duration = Duration::from_millis(1000);
@@ -901,7 +906,7 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
         &dir.join("assets"),
         data.as_ref().map(|d| d.0.clone()),
     );
-    if !run.until(EXPECT_WAIT, |v| !v.attached().is_empty()) {
+    if !run.until(START_WAIT, |v| !v.attached().is_empty()) {
         return Err(Failure {
             check: None,
             errors: !run.errors().is_empty(),
