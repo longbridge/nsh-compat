@@ -107,7 +107,10 @@
 //!   step), only the bindings that fire while editing do;
 //! - `scroll <selector> <x> <y>`: the scroll view the selector names
 //!   scrolled to content offset `<x> <y>` (`onScroll` then reports it,
-//!   with the sizes the core knows, and its `contentOffset` reads it);
+//!   with the sizes the core knows, and its `contentOffset` reads it) and
+//!   at rest there: the animated value bound to its offset follows it, and
+//!   the snapping values that follow that settle (what `animated` reads:
+//!   a carousel's indicator, a header that hides as content scrolls);
 //! - `fontscale <scale>`: before anything else (with `viewport`), the
 //!   user's text size (1 by default), which scales the fonts of texts and
 //!   inputs;
@@ -1296,6 +1299,7 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                     if let Some(view) = run.views.nodes.get_mut(&id) {
                         view.mounted.scrolled(x, y);
                     }
+                    values::scrolled(id, x, y);
                 }
                 "origin" => {
                     let (selector, at) = selector(arg);
@@ -2040,6 +2044,65 @@ mod tests {
         assert!(is_selector("text:\"A b\" Enter"));
         assert!(!is_selector("mod+k"));
         assert!(!is_selector("escape"));
+    }
+
+    #[test]
+    fn a_scroll_moves_the_values_that_follow_it_and_settles_them() {
+        use nsh_core::animation::{AnimationOp, AnimationProp};
+
+        values::animated(None);
+        let mut views = list();
+        views.apply(&MountBatch {
+            items: vec![
+                MountItem::Animation(AnimationOp::CreateValue {
+                    node: 2,
+                    value: 0.0,
+                }),
+                // Follows the offset's changes within 0..1 and, at rest,
+                // goes to the nearer end (a header hiding as content
+                // scrolls).
+                MountItem::Animation(AnimationOp::CreateDiffClamp {
+                    node: 3,
+                    input: 2,
+                    min: 0.0,
+                    max: 1.0,
+                    snap: true,
+                }),
+                MountItem::ScrollConfig {
+                    id: 2,
+                    horizontal: false,
+                    scrollbar_visible: true,
+                    replaced: false,
+                    scroll_value: Some(2),
+                    pull_value: None,
+                    keyboard_dismiss: Default::default(),
+                    mirrored: false,
+                },
+                MountItem::AnimationBindings {
+                    id: 8,
+                    bindings: vec![(AnimationProp::Opacity, 3)],
+                },
+            ],
+        });
+        let opacity = || {
+            values::live(8)
+                .into_iter()
+                .find(|(name, _)| name == "opacity")
+                .map(|(_, value)| value)
+        };
+        assert_eq!(opacity().as_deref(), Some("0"));
+        // Another scroll view moves nothing.
+        values::scrolled(4, 0.0, 300.0);
+        assert_eq!(opacity().as_deref(), Some("0"));
+        values::scrolled(2, 0.0, 200.0);
+        assert_eq!(opacity().as_deref(), Some("1"));
+        // Back by three quarters, then at rest: the nearer end, 0.
+        values::scrolled(2, 0.0, 199.25);
+        let end = Instant::now() + Duration::from_secs(5);
+        while opacity().as_deref() != Some("0") {
+            assert!(Instant::now() < end, "never settled: {:?}", opacity());
+            std::thread::sleep(FRAME);
+        }
     }
 
     #[test]
