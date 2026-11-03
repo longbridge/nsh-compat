@@ -27,7 +27,9 @@
 //!   is (the view's center, in it and on the surface; a span's in its
 //!   text's view) and its click count: a `tap` right after a `tap` of the
 //!   same view counts up (two in a row are a double click, as `nsh test`'s
-//!   `press` twice), any other step between starts again at 1;
+//!   `press` twice), any other step between starts again at 1. On macOS
+//!   and the web it takes the keyboard focus off another view (not an
+//!   input) that has it (`onBlur`);
 //! - `wait <ms>`: lets timers and animations run;
 //! - `frame <selector> <x> <y> <width> <height>`: the first view on screen
 //!   the selector names (itself, pressable or not) is laid out at that
@@ -88,7 +90,10 @@
 //!   on), or the system cancels it. The n-th touch event of a run has
 //!   timestamp `16 * n` (ms);
 //! - `type <selector> <text>`: the user types `<text>` (the rest of the
-//!   line) into the input the selector names, one character at a time:
+//!   line) into the input the selector names, which takes the focus first
+//!   (as `nsh test`'s `type`: the view that had it hears `onBlur`, the
+//!   input `onFocus`, each when it listens, and its `focused` state is
+//!   reported), one character at a time:
 //!   `onKeyPress` (`key`), `onChange` (the whole text) and
 //!   `onSelectionChange` (the caret after it) for each. It types after
 //!   the input's text: the value the app last set, or what earlier `type`
@@ -101,12 +106,20 @@
 //!   on every platform: the newest binding of the app's keymap
 //!   (`keymap.bind`, and the keys a focused control binds: a tree's or a
 //!   carousel's arrows) that fires where the focus is hears it
-//!   (`onKeyCommand`); Escape that no binding takes goes back as `back`
-//!   does when there is something to go back from and no input has the
-//!   focus; another key no binding takes reaches nothing. A control
-//!   is focused by `event <selector> onFocus`, as the platform reports it;
-//!   while an input has the focus (the app's `focus()`, or an `onFocus`
-//!   step), only the bindings that fire while editing do;
+//!   (`onKeyCommand`). A key no binding takes: on macOS and the web, Tab
+//!   (`shift+tab`: backwards) moves the keyboard focus to the next stop,
+//!   around from the last (the inputs that edit, the views that take
+//!   presses unless `focusable={false}` and the `focusable={true}` ones;
+//!   on screen, laid out to an area and not disabled, in tree order): the
+//!   view it leaves hears `onBlur` and the one it reaches `onFocus` (each
+//!   when it listens), with their `focused` state reported; there Return
+//!   and Space press the view (not an input) with the focus when it takes
+//!   presses (`onPressDown`, `onPressUp`, `onPress`); Escape goes back as
+//!   `back` does when there is something to go back from and no input has
+//!   the focus; another key reaches nothing. A control is also focused by
+//!   `event <selector> onFocus`, as the platform reports it; while an
+//!   input has the focus (the app's `focus()`, `type`, Tab, or an
+//!   `onFocus` step), only the bindings that fire while editing do;
 //! - `back`: goes back as the user does (a header's back button, the back
 //!   key; `nsh test`'s `back`): when the root listens to `onBackPress`
 //!   (the core's overlays, `BackHandler`) and the back would not close a
@@ -193,7 +206,7 @@ use nsh_core::{
     geometry::{DevicePixels, point, px},
     keymap::{Key, KeyMatch, Keymap, Keystroke, Modifiers},
     platform::{Environment, Idiom, Os},
-    tailwind::state,
+    tailwind::state::{self, FOCUSED},
 };
 use nsh_engine::{Assets, Bundle, Engine, EngineConfig, EngineControl, MountSink};
 
@@ -350,6 +363,8 @@ struct View {
     frame: Option<Rect>,
     /// What the platform got for it, as `prop` and `style` read it.
     mounted: Mounted,
+    /// The interaction states it was last reported in.
+    states: u16,
 }
 
 impl Views {
@@ -471,6 +486,53 @@ impl Views {
         self.nodes
             .get(&id)
             .is_some_and(|v| v.mounted.listens(event))
+    }
+
+    /// The view (not an input) with the keyboard focus.
+    fn key_focus(&self) -> Option<NodeId> {
+        self.focus
+            .filter(|id| !self.is_input(*id) && self.nodes.contains_key(id))
+    }
+
+    /// Whether view `id` or a view around it is disabled.
+    fn disabled_from(&self, mut id: NodeId) -> bool {
+        loop {
+            let Some(view) = self.nodes.get(&id) else {
+                return false;
+            };
+            if view.mounted.disabled() {
+                return true;
+            }
+            match view.parent {
+                Some(parent) => id = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// Tab's stops in tree order, as `nsh test` has them where Tab stops
+    /// at views (macOS, the web): the views on screen, laid out to an area
+    /// and enabled (with the views around them), that are inputs that edit
+    /// or views [`nsh_core::ViewProps::focus_stop`] takes.
+    fn tab_stops(&self) -> Vec<NodeId> {
+        self.shown()
+            .into_iter()
+            .filter(|&id| {
+                self.nodes.get(&id).is_some_and(|v| {
+                    v.frame.is_some_and(|f| f.width > 0.0 && f.height > 0.0) && v.mounted.tab_stop()
+                })
+            })
+            .filter(|&id| !self.disabled_from(id))
+            .collect()
+    }
+
+    /// Sets (or clears) state `bit` of view `id`: its states to report,
+    /// when it reports that state and they change.
+    fn set_state(&mut self, id: NodeId, bit: u16, on: bool) -> Option<u16> {
+        let view = self.nodes.get_mut(&id)?;
+        let next = nsh_core::input::next_states(view.mounted.tracked(), view.states, bit, on)?;
+        view.states = next;
+        Some(next)
     }
 
     /// The screens stack `id` shows, bottom to top (without those a back
@@ -939,6 +1001,55 @@ impl Run {
         }
     }
 
+    /// Sends `kind` to view `id` if it reports it, as platforms do.
+    fn send(&self, id: NodeId, kind: EventKind, payload: EventPayload) {
+        if self.views.hears(id, kind) {
+            self.control.dispatch_event(id, kind, payload);
+        }
+    }
+
+    /// A view's `focus:` state, which follows the keyboard focus: reported
+    /// whatever the view tracks, as the platforms report it
+    /// (`nsh_core::input::reported_states`).
+    fn set_focused_state(&mut self, id: NodeId, on: bool) {
+        if let Some(states) = self.views.set_state(id, FOCUSED, on) {
+            self.control.set_states(id, states);
+        }
+    }
+
+    /// Moves the keyboard focus to `to` (an input or a view), telling the
+    /// view it leaves (`onBlur`) and the one it reaches (`onFocus`), each
+    /// when it listens, as `nsh test` does.
+    fn move_focus(&mut self, to: Option<NodeId>) {
+        let from = self.views.focus;
+        if from == to {
+            return;
+        }
+        if let Some(old) = from {
+            self.views.focus = None;
+            self.set_focused_state(old, false);
+            self.send(old, EventKind::Blur, EventPayload::None);
+        }
+        if let Some(new) = to {
+            self.views.focus = Some(new);
+            self.set_focused_state(new, true);
+            self.send(new, EventKind::Focus, EventPayload::None);
+        }
+    }
+
+    /// Tab (`back`: Shift+Tab): the keyboard focus moves to the next stop
+    /// ([`Views::tab_stops`]), around from the last.
+    fn tab(&mut self, back: bool) {
+        let stops = self.views.tab_stops();
+        let at = self
+            .views
+            .focus
+            .and_then(|id| stops.iter().position(|s| *s == id));
+        if let Some(next) = nsh_core::input::tab_stop(at, stops.len(), back, true) {
+            self.move_focus(Some(stops[next]));
+        }
+    }
+
     /// Goes back as a platform does ([`Views::back`]); false when nothing
     /// could.
     fn go_back(&mut self, ask: bool) -> bool {
@@ -1245,6 +1356,11 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                         Some(_) => run.views.find_shown(arg).unwrap_or(id),
                         None => id,
                     };
+                    // A pointer's press takes the keyboard focus off the
+                    // view Tab gave it to.
+                    if tabs_to_views(os) && run.views.key_focus().is_some_and(|f| f != id) {
+                        run.move_focus(None);
+                    }
                     let payload = device.press(&run.views, id, at);
                     run.control.dispatch_event(id, EventKind::Press, payload);
                 }
@@ -1505,26 +1621,44 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                         .map_err(|e| format!("`{line}`: key <keys>: {e}"))?;
                     run.settle(TAP_WAIT);
                     let m = stroke.modifiers;
-                    let plain = !(m.ctrl || m.alt || m.cmd || m.shift);
-                    match run.views.key_match(stroke) {
-                        KeyMatch::Fire(id) => run.control.dispatch_event(
+                    let plain = !(m.ctrl || m.alt || m.cmd);
+                    let found = run.views.key_match(stroke);
+                    // The view Tab gave the focus to, when it takes presses.
+                    let pressable = run
+                        .views
+                        .key_focus()
+                        .filter(|v| run.views.hears(*v, EventKind::Press));
+                    if let KeyMatch::Fire(id) = found {
+                        run.control.dispatch_event(
                             ROOT,
                             EventKind::KeyCommand,
                             EventPayload::Value(PayloadValue::Number(f64::from(id))),
-                        ),
-                        // Escape no binding takes goes back, as the
-                        // desktops' back key does, when an input does not
-                        // have the focus and there is something to go back
-                        // from.
-                        KeyMatch::None
-                            if stroke.key == Key::Escape
-                                && plain
-                                && !run.views.editing()
-                                && run.views.back_target() != Back::Nothing =>
-                        {
-                            run.go_back(true);
+                        );
+                    } else if found != KeyMatch::None {
+                        // A held key's repeat: consumed.
+                    } else if stroke.key == Key::Tab && plain && tabs_to_views(os) {
+                        run.tab(m.shift);
+                    } else if let Some(view) = pressable
+                        && tabs_to_views(os)
+                        && plain
+                        && !m.shift
+                        && matches!(stroke.key, Key::Enter | Key::Char(' '))
+                    {
+                        // Return and Space press it (a stop that takes no
+                        // presses hears its keys through the keymap only).
+                        for kind in [EventKind::PressDown, EventKind::PressUp, EventKind::Press] {
+                            run.send(view, kind, EventPayload::None);
                         }
-                        _ => {}
+                    } else if stroke.key == Key::Escape
+                        && plain
+                        && !m.shift
+                        && !run.views.editing()
+                        && run.views.back_target() != Back::Nothing
+                    {
+                        // Escape goes back, as the desktops' back key
+                        // does, when an input does not have the focus and
+                        // there is something to go back from.
+                        run.go_back(true);
                     }
                 }
                 "back" => {
@@ -1546,6 +1680,11 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                         run.control
                             .dispatch_event(id, EventKind::KeyPress, key(text.trim()));
                     } else {
+                        // The input takes the focus first, as `nsh test`'s
+                        // `type` gives it.
+                        if run.views.is_input(id) {
+                            run.move_focus(Some(id));
+                        }
                         let value = run
                             .views
                             .nodes
@@ -1640,6 +1779,9 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                     }
                     let id = tracks(&run.views).unwrap();
                     run.control.set_states(id, states);
+                    if let Some(view) = run.views.nodes.get_mut(&id) {
+                        view.states = states;
+                    }
                 }
                 "keyboard" => {
                     let [height, duration] = numbers::<2>(arg)
@@ -1741,6 +1883,12 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
             message: format!("the app reported errors: {errors:?}"),
         }),
     }
+}
+
+/// Whether Tab moves the keyboard focus between views (not only inputs),
+/// as on macOS and the web (`nsh test`'s).
+fn tabs_to_views(os: Os) -> bool {
+    matches!(os, Os::MacOs | Os::Web)
 }
 
 /// Splits a step's argument into its selector and the rest: the selector
@@ -2618,5 +2766,96 @@ mod tests {
             back(&mut views, false),
             Some(vec![(12, EventKind::BackRequest)])
         );
+    }
+
+    fn props(id: NodeId, focusable: Option<bool>, disabled: bool) -> MountItem {
+        let mut props = ViewProps {
+            focusable,
+            ..Default::default()
+        };
+        props.accessibility.state.disabled = disabled;
+        MountItem::ViewProps {
+            id,
+            props: Box::new(props),
+        }
+    }
+
+    #[test]
+    fn tab_stops_at_inputs_that_edit_and_views_that_take_presses_or_are_focusable() {
+        let mut views = Views::default();
+        let mut items = vec![create(2, ViewKind::View), insert(ROOT, 2)];
+        for (id, kind) in [
+            (4, ViewKind::View),   // takes presses: a stop
+            (6, ViewKind::Input),  // edits: a stop
+            (8, ViewKind::Input),  // read-only
+            (10, ViewKind::View),  // takes presses, `focusable={false}`
+            (12, ViewKind::View),  // takes none, `focusable={true}`: a stop
+            (14, ViewKind::View),  // takes presses, disabled
+            (16, ViewKind::View),  // disabled: what it holds is too
+            (20, ViewKind::View),  // takes presses, laid out to no area
+            (22, ViewKind::Input), // edits: a stop
+        ] {
+            items.extend([
+                create(id, kind),
+                insert(2, id),
+                frame(id, 0.0, 0.0, 100.0, 20.0),
+            ]);
+        }
+        items.extend([
+            create(18, ViewKind::View),
+            insert(16, 18),
+            frame(18, 0.0, 0.0, 100.0, 20.0),
+            pressable(4),
+            pressable(10),
+            pressable(14),
+            pressable(18),
+            pressable(20),
+            props(10, Some(false), false),
+            props(12, Some(true), false),
+            props(14, None, true),
+            props(16, None, true),
+            frame(20, 0.0, 0.0, 0.0, 0.0),
+            MountItem::Input {
+                id: 8,
+                config: Box::new(nsh_core::InputConfig {
+                    editable: false,
+                    ..Default::default()
+                }),
+            },
+        ]);
+        views.apply(&MountBatch { items });
+        let stops = views.tab_stops();
+        assert_eq!(stops, [4, 6, 12, 22]);
+        // Tab goes on from the stop with the focus, around from the last;
+        // Shift+Tab goes back.
+        let next = |at: Option<usize>, back: bool| {
+            nsh_core::input::tab_stop(at, stops.len(), back, true).map(|i| stops[i])
+        };
+        assert_eq!(next(None, false), Some(4));
+        assert_eq!(next(Some(3), false), Some(4));
+        assert_eq!(next(Some(0), true), Some(22));
+
+        // The keyboard focus on a view is its key focus; on an input it is
+        // not.
+        views.focus = Some(4);
+        assert_eq!(views.key_focus(), Some(4));
+        views.focus = Some(6);
+        assert_eq!(views.key_focus(), None);
+
+        // The `focused` state is reported whatever the view tracks, once
+        // per change.
+        assert_eq!(views.set_state(4, FOCUSED, true), Some(FOCUSED));
+        assert_eq!(views.set_state(4, FOCUSED, true), None);
+        views.apply(&MountBatch {
+            items: vec![MountItem::TrackStates {
+                id: 4,
+                states: state::PRESSED,
+            }],
+        });
+        assert_eq!(
+            views.set_state(4, state::PRESSED, true),
+            Some(FOCUSED | state::PRESSED)
+        );
+        assert_eq!(views.set_state(4, FOCUSED, false), Some(state::PRESSED));
     }
 }

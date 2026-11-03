@@ -1301,6 +1301,38 @@ impl Mounted {
         self.modal.as_ref().is_some_and(|m| m.close_on_escape)
     }
 
+    /// The interaction states the platform reports of the view
+    /// ([`MountItem::TrackStates`]).
+    pub(crate) fn tracked(&self) -> u16 {
+        self.tracked
+    }
+
+    /// Whether the view itself is disabled (its accessibility state).
+    pub(crate) fn disabled(&self) -> bool {
+        self.props
+            .as_ref()
+            .is_some_and(|p| p.accessibility.state.disabled)
+    }
+
+    /// Whether Tab stops at the view where it stops at views (macOS, the
+    /// web), disabled aside: an input that edits, or a view
+    /// [`ViewProps::focus_stop`] takes (one that takes presses unless
+    /// `focusable={false}`, a `focusable={true}` one whether or not it
+    /// does).
+    pub(crate) fn tab_stop(&self) -> bool {
+        if self.is_input() {
+            return self
+                .input
+                .as_ref()
+                .map_or_else(|| InputConfig::default().editable, |c| c.editable);
+        }
+        let props = ViewProps {
+            focusable: self.props.as_ref().and_then(|p| p.focusable),
+            ..Default::default()
+        };
+        props.focus_stop(self.listens(EventKind::Press))
+    }
+
     /// Whether the view is a text input.
     pub(crate) fn is_input(&self) -> bool {
         self.kind == Some(ViewKind::Input)
