@@ -118,7 +118,8 @@
 //!   on every platform: the newest binding of the app's keymap
 //!   (`keymap.bind`, and the keys a focused control binds: a tree's or a
 //!   carousel's arrows) that fires where the focus is hears it
-//!   (`onKeyCommand`). A key no binding takes: on macOS and the web, Tab
+//!   (`onKeyCommand`); a `passThrough` binding hears it and leaves the
+//!   key to what follows. A key no binding takes: on macOS and the web, Tab
 //!   (`shift+tab`: backwards) moves the keyboard focus to the next stop,
 //!   around from the last (the inputs that edit, the views that take
 //!   presses unless `focusable={false}` and the `focusable={true}` ones;
@@ -708,6 +709,15 @@ impl Views {
             }
             // A held key's repeat: consumed.
             KeyMatch::Held => return,
+            // A `passThrough` binding: heard, and the key goes on.
+            KeyMatch::Notify(id) => {
+                let id = PayloadValue::Number(f64::from(id));
+                self.reports.push(Report::Event(
+                    ROOT,
+                    EventKind::KeyCommand,
+                    EventPayload::Value(id),
+                ));
+            }
             KeyMatch::None => {}
         }
         if stroke.key == Key::Tab && plain && tabs {
