@@ -14,7 +14,7 @@ license = "Apache-2.0"
 # (`../nsh`): NSH's CI checks both out side by side, and `cargo xtask compat`
 # links its checkout there.
 [dependencies]
-nsh-core = { path = "../nsh/crates/nsh-core" }
+nsh-core = { path = "../nsh/crates/nsh-core", features = ["declarations"] }
 nsh-js = { path = "../nsh/crates/nsh-js" }
 nsh-base = { path = "../nsh/crates/nsh-base" }
 nsh-engine = { path = "../nsh/crates/nsh-engine" }
