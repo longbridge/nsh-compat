@@ -1687,9 +1687,7 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                 Some("desktop") => environment.idiom = Idiom::Desktop,
                 Some("terminal") => environment.idiom = Idiom::Terminal,
                 Some(other) => {
-                    return Err(
-                        format!("`{line}`: `{other}`, not `desktop` or `terminal`").into()
-                    );
+                    return Err(format!("`{line}`: `{other}`, not `desktop` or `terminal`").into());
                 }
             }
         } else if let Some(scale) = line.strip_prefix("fontscale ") {
