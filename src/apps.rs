@@ -2580,16 +2580,18 @@ fn event_payload(
                 count: typed.2,
             }
         }
-        EventKind::FileDragEnter | EventKind::FileDrop if keys.iter().all(|k| *k == "uris") => EventPayload::FileDrop(
-            fields
-                .into_iter()
-                .map(|(_, f)| match f {
-                    Field::Str(s) => s,
-                    Field::Number(n) => n.to_string(),
-                    Field::Bool(b) => b.to_string(),
-                })
-                .collect(),
-        ),
+        EventKind::FileDragEnter | EventKind::FileDrop if keys.iter().all(|k| *k == "uris") => {
+            EventPayload::FileDrop(
+                fields
+                    .into_iter()
+                    .map(|(_, f)| match f {
+                        Field::Str(s) => s,
+                        Field::Number(n) => n.to_string(),
+                        Field::Bool(b) => b.to_string(),
+                    })
+                    .collect(),
+            )
+        }
         EventKind::PanStart | EventKind::PanEnd => EventPayload::Pan {
             translation: point(
                 px(num("translationX").unwrap_or(0.0)),
