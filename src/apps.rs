@@ -2556,11 +2556,24 @@ fn event_payload(
                     pressed,
                 ))
             } else {
-                EventPayload::ContextMenu(ContextMenuEvent {
-                    position: point(px(location_x), px(location_y)),
-                    page_position: point(px(page_x), px(page_y)),
+                // `pointerType` as handlers read it; scripts written before
+                // it existed are the secondary button (`"mouse"`), and
+                // `pointerType=null` is the keyboard or a screen reader.
+                let pointer_type = match get("pointerType") {
+                    None => Some(nsh_core::PointerType::Mouse),
+                    Some(Field::Str(t)) if t == "null" => None,
+                    Some(Field::Str(t)) => Some(
+                        nsh_core::PointerType::from_name(t)
+                            .ok_or_else(|| format!("no pointer type `{t}`"))?,
+                    ),
+                    Some(_) => return Err("`pointerType` is a name or `null`".into()),
+                };
+                EventPayload::ContextMenu(ContextMenuEvent::new(
+                    point(px(location_x), px(location_y)),
+                    point(px(page_x), px(page_y)),
                     modifiers,
-                })
+                    pointer_type,
+                ))
             }
         }
         _ if fields.is_empty() => EventPayload::None,
