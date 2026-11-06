@@ -417,6 +417,7 @@ impl Mounted {
                     "allowsBackForwardNavigationGestures",
                     w.back_forward_gestures.to_string(),
                 );
+                out.put("incognito", w.incognito.to_string());
             }
             Some(ViewKind::Video) => {
                 let v = match &self.native {
