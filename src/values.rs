@@ -241,6 +241,14 @@ impl Mounted {
         if let Some(v) = p.window_drag {
             out.put("windowDrag", v.to_string());
         }
+        #[cfg(nsh_has_window_controls)]
+        if let Some(v) = p.window_control {
+            out.put("windowControl", v.js_name().into());
+        }
+        #[cfg(nsh_has_window_controls)]
+        if let Some(v) = p.window_resize {
+            out.put("windowResize", v.js_name().into());
+        }
         if let Some(v) = p.focusable {
             out.put("focusable", v.to_string());
         }
