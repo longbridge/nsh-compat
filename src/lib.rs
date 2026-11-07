@@ -207,8 +207,17 @@ fn record_breaks(
 /// example (`examples/<app>/`, its script `tests/compat/examples/<app>.txt`).
 struct CheckoutApp {
     name: String,
+    example: bool,
     source: PathBuf,
     script: PathBuf,
+}
+
+impl CheckoutApp {
+    /// Cases and examples can share a logical name, but never build files.
+    fn build_name(&self) -> String {
+        let kind = if self.example { "example" } else { "case" };
+        format!("{kind}-{}", self.name)
+    }
 }
 
 /// The checkout's apps (`NSH_COMPAT_APP=<name>`: those whose name starts
@@ -228,6 +237,7 @@ fn checkout_apps() -> Vec<CheckoutApp> {
         if dir.join("script.txt").is_file() {
             out.push(CheckoutApp {
                 name: release_name(&dir),
+                example: false,
                 script: dir.join("script.txt"),
                 source: dir,
             });
@@ -242,6 +252,7 @@ fn checkout_apps() -> Vec<CheckoutApp> {
         };
         out.push(CheckoutApp {
             name: name.to_owned(),
+            example: true,
             source: nsh.join("examples").join(name),
             script,
         });
@@ -272,8 +283,7 @@ fn build(app: &CheckoutApp, out: &Path) -> Result<(), String> {
             nsh_dir().display()
         ));
     }
-    let staging = out.with_extension("build");
-    let _ = std::fs::remove_dir_all(&staging);
+    let staging = out.join(".build");
     let _ = std::fs::remove_dir_all(out);
     let built = Command::new(&bin)
         .args(["build", "--release", "-o"])
@@ -311,8 +321,8 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Builds the checkout's apps into `root/<app>/`, side by side; the
-/// directories built, or what failed.
+/// Builds cases and examples into separate `root/case-<app>/` and
+/// `root/example-<app>/` directories; the directories built, or what failed.
 fn build_checkout_apps(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let apps = checkout_apps();
     let results: Vec<_> = std::thread::scope(|s| {
@@ -320,10 +330,11 @@ fn build_checkout_apps(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
             .iter()
             .map(|app| {
                 s.spawn(move || {
-                    let dir = root.join(&app.name);
+                    let name = app.build_name();
+                    let dir = root.join(&name);
                     build(app, &dir)
-                        .map(|()| (app.name.clone(), dir))
-                        .map_err(|e| format!("{}: {e}", app.name))
+                        .map_err(|e| format!("{name}: {e}"))
+                        .map(|()| (name, dir))
                 })
             })
             .collect();
@@ -389,6 +400,9 @@ pub fn record(version: &str) -> Result<PathBuf, String> {
 /// and their `covers` claims hold.
 pub fn checkout_apps_run() -> Result<(), String> {
     let root = work_dir().join("checkout");
+    if root.exists() {
+        std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    }
     let built = build_checkout_apps(&root)?;
     let failed = run_apps(&built);
     if !failed.is_empty() {
@@ -464,6 +478,22 @@ pub fn any_release() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn case_and_example_build_names_do_not_collide() {
+        let mut names = std::collections::HashSet::new();
+        for name in ["desktop", "example-desktop", "desktop.build"] {
+            for example in [false, true] {
+                let app = CheckoutApp {
+                    name: name.into(),
+                    example,
+                    source: PathBuf::new(),
+                    script: PathBuf::new(),
+                };
+                assert!(names.insert(app.build_name()));
+            }
+        }
+    }
 
     #[test]
     fn checkout_apps_run() {
