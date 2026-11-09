@@ -249,6 +249,10 @@ impl Mounted {
         if let Some(v) = p.window_resize {
             out.put("windowResize", v.js_name().into());
         }
+        #[cfg(nsh_has_web_element)]
+        if let Some(v) = p.web_element {
+            out.put("element", v.js_name().into());
+        }
         if let Some(v) = p.focusable {
             out.put("focusable", v.to_string());
         }

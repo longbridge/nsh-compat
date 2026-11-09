@@ -5,6 +5,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(nsh_has_macos_backdrop)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_glass_tint)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_window_controls)");
+    println!("cargo:rustc-check-cfg=cfg(nsh_has_web_element)");
 
     // The checker must still compile against NSH checkouts predating these
     // fields, so detect the public API before referring to their Rust fields.
@@ -15,6 +16,9 @@ fn main() {
     }
     if specs.iter().any(|spec| spec.name == "windowControl") {
         println!("cargo:rustc-cfg=nsh_has_window_controls");
+    }
+    if specs.iter().any(|spec| spec.name == "element") {
+        println!("cargo:rustc-cfg=nsh_has_web_element");
     }
     if Style::default()
         .set("glassTintColor", StyleValue::Str("#ff0000"))
