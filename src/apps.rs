@@ -189,6 +189,13 @@
 //!   told to show reads `<value>` for each `<key>` given (`foreground`:
 //!   `auto`, `light` or `dark`; `hidden`, `animated`: `true` or `false`;
 //!   compat/values.rs), waits for it;
+//! - `tray click [<x> <y> <width> <height>]`: the user clicks the app's
+//!   tray icon (`Tray.set`, on a desktop platform) with the primary button:
+//!   the platform reports its `onClick`, with the icon's frame on the
+//!   screen in points (from the primary display's top left, `y` down) when
+//!   given, else with none, as on Linux, where the system does not say
+//!   where the icon is. It fails when the app shows no tray icon, or one
+//!   without an `onClick`;
 //! - `covers <item>`: no step, a claim: the script checks what `<item>` (a
 //!   part of the API as coverage.rs names it) does (coverage.rs
 //!   verifies it).
@@ -248,7 +255,8 @@ use nsh_core::{
     ApproxTextEngine, Command, ContextMenuEvent, EventKind, EventPayload, MountBatch, MountItem,
     MouseButton, MouseEvent, NodeId, PayloadValue, Points, PressEvent, Size, SubmitBehavior,
     TextLink, TouchEvent, TouchPhase, TouchPoint, ViewKind,
-    geometry::{DevicePixels, point, px},
+    desktop::{DesktopCommand, Tray},
+    geometry::{Bounds, DevicePixels, point, px, size},
     keymap::{Key, KeyMatch, Keymap, Keystroke, Modifiers},
     platform::{Environment, Idiom, Os},
     tailwind::state::{self, FOCUSED},
@@ -377,6 +385,9 @@ struct Views {
     /// The app asked for a back (`Command::Back`: a back press no listener
     /// took), which the run carries out.
     back_asked: bool,
+    /// The app's tray icon: the last one the platform was told to show
+    /// (`Tray.set`; `None`: none, or removed).
+    tray: Option<Tray>,
 }
 
 /// What the platform reports to the engine, as [`Views`] decides it.
@@ -494,6 +505,14 @@ impl Views {
                     command: Command::Back,
                     ..
                 } => self.back_asked = true,
+                MountItem::Command {
+                    command: Command::Desktop(command),
+                    ..
+                } => {
+                    if let DesktopCommand::SetTray(tray) = &**command {
+                        self.tray = tray.clone();
+                    }
+                }
                 MountItem::Command {
                     id,
                     command: Command::ScrollTo { x, y, .. },
@@ -2218,6 +2237,39 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                         return failed(what, &run);
                     }
                 }
+                "tray" => {
+                    let usage = || format!("`{line}`: tray click [<x> <y> <width> <height>]");
+                    let rest = arg.strip_prefix("click").ok_or_else(usage)?;
+                    let bounds = if rest.trim().is_empty() {
+                        None
+                    } else {
+                        let [x, y, width, height] = numbers::<4>(rest)
+                            .filter(|[_, _, w, h]| *w >= 0.0 && *h >= 0.0)
+                            .ok_or_else(usage)?;
+                        Some(Bounds::new(
+                            point(px(x), px(y)),
+                            size(px(width), px(height)),
+                        ))
+                    };
+                    run.settle(TAP_WAIT);
+                    let click = match &run.views.tray {
+                        None => return failed("the app shows no tray icon".into(), &run),
+                        Some(tray) if tray.click == 0 => {
+                            return failed("the tray icon has no onClick".into(), &run);
+                        }
+                        Some(tray) => tray.click,
+                    };
+                    // As the platforms report a click: the root's menu
+                    // event with the click's id, and the icon's frame where
+                    // the system says where the icon is.
+                    let mut payload = vec![("id", PayloadValue::Number(f64::from(click)))];
+                    if let Some(bounds) = bounds {
+                        payload.push(("bounds", PayloadValue::Bounds(bounds)));
+                    }
+                    run.control
+                        .dispatch_event(ROOT, EventKind::Menu, EventPayload::Map(payload));
+                    run.flush();
+                }
                 "covers" => return Ok(()),
                 other => return Err(format!("unknown step `{other}`").into()),
             }
@@ -3700,5 +3752,25 @@ mod tests {
             &mut device,
         );
         assert!(reports(&mut views).is_empty());
+    }
+
+    #[test]
+    fn a_tray_click_reaches_the_last_tray_the_app_set() {
+        let set = |tray: Option<Tray>| MountBatch {
+            items: vec![MountItem::Command {
+                id: ROOT,
+                command: Command::Desktop(Box::new(DesktopCommand::SetTray(tray))),
+            }],
+        };
+        let mut views = Views::default();
+        let mut tray = Tray::default();
+        tray.click = 7;
+        views.apply(&set(Some(tray.clone())));
+        tray.click = 9;
+        views.apply(&set(Some(tray)));
+        assert_eq!(views.tray.as_ref().map(|t| t.click), Some(9));
+        // Removed: nothing to click.
+        views.apply(&set(None));
+        assert!(views.tray.is_none());
     }
 }
