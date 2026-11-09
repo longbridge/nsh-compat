@@ -16,7 +16,7 @@ license = "Apache-2.0"
 [dependencies]
 nsh-core = { path = "../nsh/crates/nsh-core", features = ["declarations", "shader"] }
 nsh-js = { path = "../nsh/crates/nsh-js" }
-nsh-base = { path = "../nsh/crates/nsh-base" }
+nsh-base = { path = "../nsh/crates/nsh-base", features = ["emoji-picker"] }
 nsh-engine = { path = "../nsh/crates/nsh-engine" }
 crossbeam-channel = "0.5"
 log = "0.4"
