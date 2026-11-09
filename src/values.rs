@@ -230,6 +230,11 @@ impl Mounted {
         if let Some(v) = &p.test_id {
             out.put("testID", v.to_string());
         }
+        // `web={{ element }}`, read as `web.element`.
+        #[cfg(nsh_has_web_element)]
+        if let Some(v) = p.web_element {
+            out.put("element", v.js_name().into());
+        }
         if let Some(pan) = p.pan_activation {
             let mut o = Object::default();
             o.opt("activeOffsetX", pan.active_offset_x.map(num));
