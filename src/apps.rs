@@ -2443,6 +2443,7 @@ impl Device {
                 page: point(px(left + x), px(top + y)),
                 location: point(px(x), px(y)),
                 changed: true,
+                pointer_type: nsh_core::PointerType::Touch,
             }],
         }
     }
