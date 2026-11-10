@@ -2238,34 +2238,14 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                     }
                 }
                 "tray" => {
-                    let usage = || format!("`{line}`: tray click [<x> <y> <width> <height>]");
-                    let rest = arg.strip_prefix("click").ok_or_else(usage)?;
-                    let bounds = if rest.trim().is_empty() {
-                        None
-                    } else {
-                        let [x, y, width, height] = numbers::<4>(rest)
-                            .filter(|[_, _, w, h]| *w >= 0.0 && *h >= 0.0)
-                            .ok_or_else(usage)?;
-                        Some(Bounds::new(
-                            point(px(x), px(y)),
-                            size(px(width), px(height)),
-                        ))
-                    };
+                    let bounds = tray_click_bounds(arg).ok_or_else(|| {
+                        format!("`{line}`: tray click [<x> <y> <width> <height>]")
+                    })?;
                     run.settle(TAP_WAIT);
-                    let click = match &run.views.tray {
-                        None => return failed("the app shows no tray icon".into(), &run),
-                        Some(tray) if tray.click == 0 => {
-                            return failed("the tray icon has no onClick".into(), &run);
-                        }
-                        Some(tray) => tray.click,
+                    let payload = match tray_click(run.views.tray.as_ref(), bounds) {
+                        Ok(payload) => payload,
+                        Err(what) => return failed(what.into(), &run),
                     };
-                    // As the platforms report a click: the root's menu
-                    // event with the click's id, and the icon's frame where
-                    // the system says where the icon is.
-                    let mut payload = vec![("id", PayloadValue::Number(f64::from(click)))];
-                    if let Some(bounds) = bounds {
-                        payload.push(("bounds", PayloadValue::Bounds(bounds)));
-                    }
                     run.control
                         .dispatch_event(ROOT, EventKind::Menu, EventPayload::Map(payload));
                     run.flush();
@@ -2774,6 +2754,45 @@ fn page_origin(views: &Views, mut id: NodeId) -> (f32, f32) {
 }
 
 /// `N` numbers separated by spaces.
+/// The icon's frame a `tray click` step gives (`click`, or `click <x> <y>
+/// <width> <height>`): `Some(None)` without one, `None` for anything else,
+/// as a glued `click1` or a size that is negative or not finite.
+fn tray_click_bounds(arg: &str) -> Option<Option<Bounds<Points>>> {
+    let (verb, rest) = arg.split_once(' ').unwrap_or((arg, ""));
+    if verb != "click" {
+        return None;
+    }
+    if rest.trim().is_empty() {
+        return Some(None);
+    }
+    let [x, y, width, height] = numbers::<4>(rest)
+        .filter(|n| n.iter().all(|v| v.is_finite()) && n[2] >= 0.0 && n[3] >= 0.0)?;
+    Some(Some(Bounds::new(
+        point(px(x), px(y)),
+        size(px(width), px(height)),
+    )))
+}
+
+/// The root's menu event a click on the app's tray icon makes, as the
+/// platforms report it: the click's id, and the icon's frame where the
+/// system says where the icon is. Fails when there is no icon, or no
+/// `onClick`.
+fn tray_click(
+    tray: Option<&Tray>,
+    bounds: Option<Bounds<Points>>,
+) -> Result<Vec<(&'static str, PayloadValue)>, &'static str> {
+    let click = match tray {
+        None => return Err("the app shows no tray icon"),
+        Some(tray) if tray.click == 0 => return Err("the tray icon has no onClick"),
+        Some(tray) => tray.click,
+    };
+    let mut payload = vec![("id", PayloadValue::Number(f64::from(click)))];
+    if let Some(bounds) = bounds {
+        payload.push(("bounds", PayloadValue::Bounds(bounds)));
+    }
+    Ok(payload)
+}
+
 fn numbers<const N: usize>(text: &str) -> Option<[f32; N]> {
     let parsed: Vec<f32> = text
         .split_whitespace()
@@ -3772,5 +3791,50 @@ mod tests {
         // Removed: nothing to click.
         views.apply(&set(None));
         assert!(views.tray.is_none());
+    }
+
+    #[test]
+    fn a_tray_click_takes_click_and_an_optional_frame() {
+        assert_eq!(tray_click_bounds("click"), Some(None));
+        assert_eq!(tray_click_bounds("click "), Some(None));
+        assert_eq!(
+            tray_click_bounds("click 1180 0 32 24"),
+            Some(Some(Bounds::new(
+                point(px(1180.0), px(0.0)),
+                size(px(32.0), px(24.0))
+            )))
+        );
+        for wrong in [
+            "",
+            "clicks",
+            "click1180 0 32 24",
+            "press 1 2 3 4",
+            "click 1 2 3",
+            "click 1 2 -3 4",
+            "click NaN 0 32 24",
+            "click 0 0 inf 24",
+        ] {
+            assert_eq!(tray_click_bounds(wrong), None, "{wrong:?}");
+        }
+    }
+
+    #[test]
+    fn a_tray_click_reports_the_click_and_its_frame() {
+        let mut tray = Tray::default();
+        assert_eq!(tray_click(None, None), Err("the app shows no tray icon"));
+        assert_eq!(
+            tray_click(Some(&tray), None),
+            Err("the tray icon has no onClick")
+        );
+        tray.click = 7;
+        let ids =
+            |p: &[(&'static str, PayloadValue)]| p.iter().map(|(k, _)| *k).collect::<Vec<_>>();
+        let plain = tray_click(Some(&tray), None).unwrap();
+        assert_eq!(ids(&plain), ["id"]);
+        assert!(matches!(plain[0].1, PayloadValue::Number(n) if n == 7.0));
+        let frame = Bounds::new(point(px(1180.0), px(0.0)), size(px(32.0), px(24.0)));
+        let framed = tray_click(Some(&tray), Some(frame)).unwrap();
+        assert_eq!(ids(&framed), ["id", "bounds"]);
+        assert!(matches!(framed[1].1, PayloadValue::Bounds(b) if b == frame));
     }
 }
