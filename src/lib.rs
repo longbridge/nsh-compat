@@ -485,21 +485,13 @@ pub fn checkout_apps_run() -> Result<(), String> {
         std::fs::remove_dir_all(&root).map_err(|e| format!("{}: {e}", root.display()))?;
     }
     let built = build_checkout_apps(&root)?;
-    // The apps' runs and the checks of their claims run side by side: each
-    // mostly waits, and the longest app's run and the claims' checks take
-    // about as long. The runs are started first, so the longest one does not
-    // wait behind the claims' starts. A failed run is the failure, as
-    // when the claims were checked after the runs.
-    let (failed, claims) = std::thread::scope(|s| {
-        let runs = s.spawn(|| run_apps(&built));
-        let claims = coverage::claims_hold(&surface::runtime(), &surface::types(), &root);
-        let failed = runs.join().unwrap_or_else(|p| std::panic::resume_unwind(p));
-        (failed, claims)
-    });
+    // The claims' checks already run their apps side by side: overlapping
+    // them with these runs starved the runs' waits on a 4-core runner.
+    let failed = run_apps(&built);
     if !failed.is_empty() {
         return Err(failed.join("\n\n"));
     }
-    claims
+    coverage::claims_hold(&surface::runtime(), &surface::types(), &root)
 }
 
 /// Everything a recorded release offered is still offered, by the rules of
