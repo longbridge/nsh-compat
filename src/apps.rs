@@ -17,7 +17,7 @@
 //!   (the desktop OSes and desktop browsers) and `web={{…}}` apply;
 //! - `expect <text>`: a text on screen reads `<text>` (waits for it);
 //! - `absent <text>`: no text on screen reads `<text>` (after the app is
-//!   quiet);
+//!   quiet; waits for a text still shown to go, as `expect` waits);
 //! - `tap <selector>`: presses the first view on screen `id:<testID>`,
 //!   `label:<accessibility label>` or `text:<text>` names, or its nearest
 //!   pressable ancestor (as `nsh test`'s `press`); `span:<text>` presses
@@ -1800,8 +1800,11 @@ pub(crate) fn run(code: String, script: &str, dir: &Path) -> Result<(), Failure>
                     }
                 }
                 "absent" => {
+                    // A busy machine can leave the engine without a frame
+                    // for longer than the quiet, so a text still shown is
+                    // given the time an `expect` gets to go.
                     run.settle(EXPECT_WAIT);
-                    if run.views.shows(arg) {
+                    if !run.until(EXPECT_WAIT, |v| !v.shows(arg)) {
                         return failed("still shown".into(), &run);
                     }
                 }
