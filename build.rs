@@ -6,6 +6,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(nsh_has_glass_tint)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_window_controls)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_web_element)");
+    println!("cargo:rustc-check-cfg=cfg(nsh_has_accessibility_description)");
 
     // The checker must still compile against NSH checkouts predating these
     // fields, so detect the public API before referring to their Rust fields.
@@ -23,6 +24,12 @@ fn main() {
         .any(|spec| spec.name == "element" && format!("{:?}", spec.platform) == "Web")
     {
         println!("cargo:rustc-cfg=nsh_has_web_element");
+    }
+    if specs
+        .iter()
+        .any(|spec| spec.name == "accessibilityDescription")
+    {
+        println!("cargo:rustc-cfg=nsh_has_accessibility_description");
     }
     if Style::default()
         .set("glassTintColor", StyleValue::Str("#ff0000"))

@@ -190,6 +190,10 @@ impl Mounted {
         if let Some(v) = &a.hint {
             out.put("accessibilityHint", v.to_string());
         }
+        #[cfg(nsh_has_accessibility_description)]
+        if let Some(v) = &a.description {
+            out.put("accessibilityDescription", v.to_string());
+        }
         out.put("role", role(a.role).into());
         let s = a.state;
         let mut o = Object::default();
