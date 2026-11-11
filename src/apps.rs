@@ -127,7 +127,11 @@
 //!   view it leaves hears `onBlur` and the one it reaches `onFocus` (each
 //!   when it listens), with their `focused` state reported; there Return
 //!   and Space press the view (not an input) with the focus when it takes
-//!   presses (`onPressDown`, `onPressUp`, `onPress`). On every platform,
+//!   presses (`onPressDown`, `onPressUp`, `onPress`): without Control, Alt
+//!   or the command key, these two are the focused view's before the
+//!   keymap's, so a binding of Return elsewhere stays quiet while the
+//!   keys a focused control binds for itself (a menu button's Return)
+//!   still fire. On every platform,
 //!   while an input on screen has the focus (the app's `focus()`, `type`,
 //!   Tab, an `onFocus` step), only the bindings that fire while editing
 //!   fire, and the keys without Control, Alt or the command key edit it
@@ -712,12 +716,20 @@ impl Views {
     /// views, Tab moves the focus and Return or Space press the view with
     /// it; else the input with the focus takes a character, Backspace or
     /// the return key; else Escape goes back when there is something to
-    /// go back from.
+    /// go back from. On a focused view that takes presses, Return and
+    /// Space without Control, Alt or the command key are its: only the
+    /// focus' own bindings take them (`Keymap::find_at`), not a binding of
+    /// Return elsewhere.
     fn press_key(&mut self, stroke: Keystroke, os: Os, device: &mut Device) {
         let m = stroke.modifiers;
         let plain = !(m.ctrl || m.alt || m.cmd);
         let tabs = tabs_to_views(os);
-        match self.key_match(stroke) {
+        // The view (not an input) with the focus, where Tab stops at views,
+        // when it takes presses.
+        let control = self
+            .key_focus()
+            .filter(|&view| tabs && self.focus.is_none() && self.hears(view, EventKind::Press));
+        match self.key_match(stroke, control.is_some()) {
             KeyMatch::Fire(id) => {
                 let id = PayloadValue::Number(f64::from(id));
                 self.reports.push(Report::Event(
@@ -746,13 +758,8 @@ impl Views {
         }
         // Return and Space press it (a stop that takes no presses hears its
         // keys through the keymap only, above).
-        if let Some(view) = self.key_focus()
-            && self.focus.is_none()
-            && self.hears(view, EventKind::Press)
-            && tabs
-            && plain
-            && !m.shift
-            && matches!(stroke.key, Key::Enter | Key::Char(' '))
+        if let Some(view) = control
+            && nsh_core::input::presses_focused_control(stroke.key, m)
         {
             for kind in [EventKind::PressDown, EventKind::PressUp, EventKind::Press] {
                 self.send(view, kind, EventPayload::None);
@@ -939,11 +946,12 @@ impl Views {
     /// What a hardware keyboard's `keystroke` does with the app's keymap,
     /// as the platforms look it up: the newest binding of it that fires
     /// where the focus is (while an input on screen has it, only those
-    /// that fire while editing).
-    fn key_match(&self, keystroke: Keystroke) -> KeyMatch {
-        self.keymap
-            .as_ref()
-            .map_or(KeyMatch::None, |k| k.find(keystroke, self.editing(), false))
+    /// that fire while editing; with `control`, a focused view that takes
+    /// presses, plain Return and Space only the focus' own).
+    fn key_match(&self, keystroke: Keystroke, control: bool) -> KeyMatch {
+        self.keymap.as_ref().map_or(KeyMatch::None, |k| {
+            k.find_at(ROOT, keystroke, self.editing(), control, false)
+        })
     }
 
     /// Whether an input on screen has the focus.
@@ -3021,7 +3029,7 @@ mod tests {
             |id: u32, keys: &str, when: When| KeyBinding::new(id, stroke(keys), when, false);
         let mut views = list();
         // No keymap yet: no key fires.
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::None);
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::None);
         views.apply(&MountBatch {
             items: vec![
                 create(12, ViewKind::Input),
@@ -3034,9 +3042,9 @@ mod tests {
                 ]))),
             ],
         });
-        assert_eq!(views.key_match(stroke("mod+k")), KeyMatch::Fire(1));
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(5));
-        assert_eq!(views.key_match(stroke("up")), KeyMatch::None);
+        assert_eq!(views.key_match(stroke("mod+k"), false), KeyMatch::Fire(1));
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::Fire(5));
+        assert_eq!(views.key_match(stroke("up"), false), KeyMatch::None);
 
         // An input focused by the app edits: only what fires while editing.
         views.apply(&MountBatch {
@@ -3045,8 +3053,8 @@ mod tests {
                 command: Command::Focus,
             }],
         });
-        assert_eq!(views.key_match(stroke("mod+k")), KeyMatch::Fire(1));
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::None);
+        assert_eq!(views.key_match(stroke("mod+k"), false), KeyMatch::Fire(1));
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::None);
         // Blurred on the root, then focused and blurred as reported.
         views.apply(&MountBatch {
             items: vec![MountItem::Command {
@@ -3054,16 +3062,16 @@ mod tests {
                 command: Command::Blur,
             }],
         });
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(5));
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::Fire(5));
         views.focused(12, true);
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::None);
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::None);
         views.focused(8, false);
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::None);
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::None);
         views.focused(12, false);
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(5));
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::Fire(5));
         // A view that is no input holds the focus without editing.
         views.focused(8, true);
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(5));
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::Fire(5));
 
         // The control's keys go with its focus: the keymap is replaced.
         views.apply(&MountBatch {
@@ -3073,7 +3081,7 @@ mod tests {
                 When::NotEditing,
             )])))],
         });
-        assert_eq!(views.key_match(stroke("down")), KeyMatch::Fire(3));
+        assert_eq!(views.key_match(stroke("down"), false), KeyMatch::Fire(3));
 
         assert!(is_selector("id:tree down"));
         assert!(is_selector("text:\"A b\" Enter"));
@@ -3645,6 +3653,60 @@ mod tests {
         assert_eq!(views.focus, Some(6));
         views.focused(6, false);
         assert_eq!(views.focus, None);
+    }
+
+    #[test]
+    fn return_and_space_press_the_focused_control_before_the_bindings() {
+        use nsh_core::keymap::{KeyBinding, When};
+
+        let f = FOCUSED;
+        let stroke = |keys: &str| Keystroke::parse(keys, Os::MacOs).unwrap();
+        // A dialog's main action on Return, and a send on Mod+Return.
+        let bindings = vec![
+            KeyBinding::new(5, stroke("enter"), When::NotEditing, false),
+            KeyBinding::new(7, stroke("mod+enter"), When::Auto, false),
+        ];
+        let mut views = form();
+        views.apply(&MountBatch {
+            items: vec![MountItem::Keymap(Arc::new(Keymap::new(bindings.clone())))],
+        });
+        let mut device = Device::default();
+        let mut key = |views: &mut Views, keys: &str| {
+            views.press_key(stroke(keys), Os::MacOs, &mut device);
+            reports(views)
+        };
+        // With the focus on no control, Return is the binding's.
+        assert_eq!(key(&mut views, "enter"), ["1 KeyCommand 5"]);
+        // Tab to the button: Return and Space (with Shift too) press it,
+        // the binding of Return stays quiet; Mod+Return fires its own.
+        key(&mut views, "tab");
+        key(&mut views, "tab");
+        assert_eq!(
+            key(&mut views, "tab"),
+            ["6 states 0", "6 Blur", &format!("8 states {f}"), "8 Focus"]
+        );
+        let press = ["8 PressDown", "8 PressUp", "8 Press"];
+        assert_eq!(key(&mut views, "enter"), press);
+        assert_eq!(key(&mut views, "space"), press);
+        assert_eq!(key(&mut views, "shift+enter"), press);
+        assert_eq!(key(&mut views, "mod+enter"), ["1 KeyCommand 7"]);
+        // A binding the focused control makes for itself (a menu button's
+        // Return opening its menu) takes Return before the press.
+        let mut own = bindings;
+        own.push(KeyBinding::new(9, stroke("enter"), When::NotEditing, false).focus_keys(true));
+        views.apply(&MountBatch {
+            items: vec![MountItem::Keymap(Arc::new(Keymap::new(own)))],
+        });
+        assert_eq!(key(&mut views, "enter"), ["1 KeyCommand 9"]);
+        assert_eq!(key(&mut views, "space"), press);
+        // Where Tab stops at inputs only, nothing is a control: Return is
+        // the binding's.
+        views.press_key(
+            Keystroke::parse("enter", Os::Ios).unwrap(),
+            Os::Ios,
+            &mut device,
+        );
+        assert_eq!(reports(&mut views), ["1 KeyCommand 9"]);
     }
 
     #[test]
