@@ -2447,6 +2447,7 @@ impl Device {
             phase,
             timestamp: 16.0 * self.touches as f64,
             activated: None,
+            modifiers: Default::default(),
             points: vec![TouchPoint {
                 id: 1,
                 target,
