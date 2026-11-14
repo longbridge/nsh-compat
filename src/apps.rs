@@ -3091,7 +3091,7 @@ mod tests {
 
     #[test]
     fn a_scroll_moves_the_values_that_follow_it_and_settles_them() {
-        use nsh_core::animation::{AnimationOp, AnimationProp};
+        use nsh_core::animation::{AnimationOp, AnimationProp, Operand};
 
         values::animated(None);
         let mut views = list();
@@ -3107,8 +3107,8 @@ mod tests {
                 MountItem::Animation(AnimationOp::CreateDiffClamp {
                     node: 3,
                     input: 2,
-                    min: 0.0,
-                    max: 1.0,
+                    min: Operand::Const(0.0),
+                    max: Operand::Const(1.0),
                     snap: true,
                 }),
                 MountItem::ScrollConfig {
