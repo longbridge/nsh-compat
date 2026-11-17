@@ -108,7 +108,7 @@ impl Mounted {
             MountItem::Input { config, .. } => self.input = Some(config.clone()),
             MountItem::InputValue { text, .. } => self.value = Some(text.clone()),
             MountItem::ScreenConfig { config, .. } => self.screen = Some(config.clone()),
-            MountItem::ModalConfig { config, .. } => self.modal = Some(*config),
+            MountItem::ModalConfig { config, .. } => self.modal = Some(config.to_owned()),
             MountItem::NativeProps { props, .. } => self.native = Some(props.clone()),
             MountItem::TrackStates { states, .. } => self.tracked = *states,
             MountItem::Canvas { drawing, .. } => self.drawing = Some(drawing.clone()),
@@ -399,7 +399,7 @@ impl Mounted {
                 out.put("animation", c.animation.js_name().into());
             }
             Some(ViewKind::Modal) => {
-                let c = self.modal.unwrap_or_default();
+                let c = self.modal.as_ref().cloned().unwrap_or_default();
                 out.put("animation", c.animation.js_name().into());
                 out.put("presentation", c.presentation.js_name().into());
                 out.put("statusBarTranslucent", c.status_bar_translucent.to_string());
