@@ -322,6 +322,8 @@ impl Mounted {
                 out.put("scrollable", b.enabled.to_string());
                 out.put("bounces", b.bounces.to_string());
                 out.put("contentInset", insets(&b.content_inset));
+                #[cfg(nsh_has_scrollbar_inset)]
+                out.put("scrollbarInset", insets(&b.scrollbar_inset));
                 out.put(
                     "keyboardShouldPersistTaps",
                     match b.keyboard_taps {
