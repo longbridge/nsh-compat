@@ -387,6 +387,8 @@ impl Mounted {
                 out.put("headerVisible", c.header_visible.to_string());
                 out.put("headerLargeTitle", c.large_title.to_string());
                 out.put("headerTransparent", c.header_transparent.to_string());
+                #[cfg(nsh_has_header_shadow_visible)]
+                out.put("headerShadowVisible", c.header_shadow_visible.to_string());
                 let mut o = Object::default();
                 o.opt("backgroundColor", c.background_color.map(color));
                 o.opt("color", c.title_color.map(color));
