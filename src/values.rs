@@ -389,6 +389,11 @@ impl Mounted {
                 out.put("headerTransparent", c.header_transparent.to_string());
                 #[cfg(nsh_has_header_shadow_visible)]
                 out.put("headerShadowVisible", c.header_shadow_visible.to_string());
+                #[cfg(nsh_has_header_background_on_scroll)]
+                out.put(
+                    "headerBackgroundOnScroll",
+                    c.header_background_on_scroll.to_string(),
+                );
                 let mut o = Object::default();
                 o.opt("backgroundColor", c.background_color.map(color));
                 o.opt("color", c.title_color.map(color));
