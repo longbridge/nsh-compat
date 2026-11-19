@@ -375,6 +375,8 @@ impl Mounted {
                     out.put("submitBehavior", v.js_name().into());
                 }
                 out.put("autoFocus", c.auto_focus.to_string());
+                #[cfg(nsh_has_select_text_on_focus)]
+                out.put("selectTextOnFocus", c.select_text_on_focus.to_string());
                 out.put("autoComplete", auto_fill(c.auto_fill).into());
                 out.put("caret", (!c.caret_hidden).to_string());
                 if let Some(v) = &c.accessory_id {
