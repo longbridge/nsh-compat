@@ -401,6 +401,8 @@ impl Mounted {
                     "headerBackgroundOnScroll",
                     c.header_background_on_scroll.to_string(),
                 );
+                #[cfg(nsh_has_header_title_align)]
+                out.put("headerTitleAlign", c.title_align.js_name().into());
                 let mut o = Object::default();
                 o.opt("backgroundColor", c.background_color.map(color));
                 o.opt("color", c.title_color.map(color));
