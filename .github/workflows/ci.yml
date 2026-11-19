@@ -62,4 +62,4 @@ jobs:
           cp ../nsh/Cargo.lock .
           cargo fmt --check
           cargo clippy --all-targets --target-dir ../nsh/target -- -D warnings
-          cargo test --target-dir ../nsh/target
+          cargo test --target-dir ../nsh/target --features nsh-core/shader,nsh-base/emoji-picker,nsh-engine/websocket
