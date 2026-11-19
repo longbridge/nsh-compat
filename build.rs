@@ -1,4 +1,4 @@
-use nsh_core::{element::TsTypes, js::host::HostProps, Prop, Style, StyleValue};
+use nsh_core::{Prop, Style, StyleValue, element::TsTypes, js::host::HostProps};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
