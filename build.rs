@@ -1,4 +1,4 @@
-use nsh_core::{Prop, Style, StyleValue, element::TsTypes, js::host::HostProps};
+use nsh_core::{element::TsTypes, js::host::HostProps, Prop, Style, StyleValue};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -40,7 +40,10 @@ fn main() {
     if specs.iter().any(|spec| spec.name == "headerShadowVisible") {
         println!("cargo:rustc-cfg=nsh_has_header_shadow_visible");
     }
-    if specs.iter().any(|spec| spec.name == "headerBackgroundOnScroll") {
+    if specs
+        .iter()
+        .any(|spec| spec.name == "headerBackgroundOnScroll")
+    {
         println!("cargo:rustc-cfg=nsh_has_header_background_on_scroll");
     }
     if Style::default()
