@@ -577,6 +577,10 @@ impl Mounted {
         if let Some(c) = s.tint_color {
             out.put("tintColor", color(c));
         }
+        #[cfg(nsh_has_accent_color)]
+        if let Some(c) = s.accent_color {
+            out.put("accentColor", color(c));
+        }
         // An image's position travels with its source (`MountItem::Image`).
         if self.kind == Some(ViewKind::Image) {
             let (_, _, options) = self.image.clone().unwrap_or_default();

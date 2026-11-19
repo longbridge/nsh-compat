@@ -5,6 +5,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(nsh_has_macos_backdrop)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_windows_backdrop)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_glass_tint)");
+    println!("cargo:rustc-check-cfg=cfg(nsh_has_accent_color)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_window_controls)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_web_element)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_accessibility_description)");
@@ -62,5 +63,11 @@ fn main() {
         .is_ok()
     {
         println!("cargo:rustc-cfg=nsh_has_glass_tint");
+    }
+    if Style::default()
+        .set("accentColor", StyleValue::Str("#ff0000"))
+        .is_ok()
+    {
+        println!("cargo:rustc-cfg=nsh_has_accent_color");
     }
 }
