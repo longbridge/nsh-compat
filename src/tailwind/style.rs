@@ -1042,6 +1042,9 @@ fn class_props(out: &mut Decls, p: &ClassProps) {
         }
         .into()
     });
+    out.diff("textWrap", &p.pretty, &d.pretty, |v| {
+        if *v { "pretty" } else { "-" }.into()
+    });
     out.diff("pointerEvents", &p.pointer_events, &d.pointer_events, |v| {
         v.as_ref().map_or("-".into(), keyword)
     });
