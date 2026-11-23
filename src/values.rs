@@ -331,6 +331,11 @@ impl Mounted {
                 out.put("snapToAlignment", b.snap_alignment.js_name().into());
                 out.put("decelerationRate", num(b.deceleration));
                 out.put("scrollable", b.enabled.to_string());
+                #[cfg(nsh_has_smooth_wheel)]
+                {
+                    out.put("smoothWheel", b.smooth_wheel.to_string());
+                    out.put("wheelLineHeight", num(b.wheel_line_height));
+                }
                 out.put("bounces", b.bounces.to_string());
                 out.put("contentInset", insets(&b.content_inset));
                 #[cfg(nsh_has_scrollbar_inset)]

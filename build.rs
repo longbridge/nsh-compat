@@ -10,6 +10,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(nsh_has_web_element)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_accessibility_description)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_scrollbar_inset)");
+    println!("cargo:rustc-check-cfg=cfg(nsh_has_smooth_wheel)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_header_shadow_visible)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_header_background_on_scroll)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_header_title_align)");
@@ -52,6 +53,9 @@ fn main() {
     }
     if specs.iter().any(|spec| spec.name == "scrollbarInset") {
         println!("cargo:rustc-cfg=nsh_has_scrollbar_inset");
+    }
+    if specs.iter().any(|spec| spec.name == "smoothWheel") {
+        println!("cargo:rustc-cfg=nsh_has_smooth_wheel");
     }
     if specs.iter().any(|spec| spec.name == "headerShadowVisible") {
         println!("cargo:rustc-cfg=nsh_has_header_shadow_visible");
