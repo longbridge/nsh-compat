@@ -380,6 +380,10 @@ impl Mounted {
                 }
                 out.put("readonly", (!c.editable).to_string());
                 out.put("pasteBehavior", c.paste_behavior.js_name().into());
+                #[cfg(nsh_has_paste_max_size)]
+                if let Some(v) = c.paste_max_size {
+                    out.put("pasteMaxSize", v.to_string());
+                }
                 if let Some(v) = c.submit_behavior {
                     out.put("submitBehavior", v.js_name().into());
                 }

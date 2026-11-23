@@ -15,6 +15,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(nsh_has_header_background_on_scroll)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_header_title_align)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_select_text_on_focus)");
+    println!("cargo:rustc-check-cfg=cfg(nsh_has_paste_max_size)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_clip_path)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_pan_edge)");
 
@@ -71,6 +72,9 @@ fn main() {
     }
     if specs.iter().any(|spec| spec.name == "selectTextOnFocus") {
         println!("cargo:rustc-cfg=nsh_has_select_text_on_focus");
+    }
+    if specs.iter().any(|spec| spec.name == "pasteMaxSize") {
+        println!("cargo:rustc-cfg=nsh_has_paste_max_size");
     }
     // `panActivation`'s `direction` and `edge` came with the pan payload's
     // `origin`.
