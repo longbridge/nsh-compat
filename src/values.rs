@@ -245,6 +245,10 @@ impl Mounted {
             o.opt("activeOffsetY", pan.active_offset_y.map(num));
             o.opt("failOffsetX", pan.fail_offset_x.map(num));
             o.opt("failOffsetY", pan.fail_offset_y.map(num));
+            #[cfg(nsh_has_pan_edge)]
+            o.opt("direction", pan.direction.map(|v| v.js_name().into()));
+            #[cfg(nsh_has_pan_edge)]
+            o.opt("edge", pan.edge.map(|v| v.js_name().into()));
             out.put("panActivation", o.done());
         }
         if let Some(v) = p.window_drag {

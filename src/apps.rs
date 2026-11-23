@@ -2663,6 +2663,11 @@ fn event_payload(
             velocity_y: num("velocityY").unwrap_or(0.0),
             value_x: num("valueX").map(px),
             value_y: num("valueY").map(px),
+            #[cfg(nsh_has_pan_edge)]
+            origin: point(
+                px(num("origin.x").unwrap_or(0.0)),
+                px(num("origin.y").unwrap_or(0.0)),
+            ),
         },
         EventKind::ScrollEnd
         | EventKind::ScrollDragStart
