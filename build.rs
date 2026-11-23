@@ -14,6 +14,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(nsh_has_header_background_on_scroll)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_header_title_align)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_select_text_on_focus)");
+    println!("cargo:rustc-check-cfg=cfg(nsh_has_clip_path)");
 
     // The checker must still compile against NSH checkouts predating these
     // fields, so detect the public API before referring to their Rust fields.
@@ -77,5 +78,11 @@ fn main() {
         .is_ok()
     {
         println!("cargo:rustc-cfg=nsh_has_accent_color");
+    }
+    if Style::default()
+        .set("clipPath", StyleValue::Str("inset(1px)"))
+        .is_ok()
+    {
+        println!("cargo:rustc-cfg=nsh_has_clip_path");
     }
 }

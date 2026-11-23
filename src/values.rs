@@ -642,6 +642,11 @@ impl Mounted {
             "maskImage",
             or_none(list(effects.mask_images.iter().map(gradient))),
         );
+        #[cfg(nsh_has_clip_path)]
+        out.put(
+            "clipPath",
+            effects.clip_path.map_or("none".into(), clip_inset),
+        );
         out.put("mixBlendMode", s.blend_mode.name().into());
         out.put("outlineWidth", num(s.outline.width));
         out.put("outlineColor", color(s.outline.color));
@@ -669,6 +674,8 @@ impl Mounted {
                             (T::TRANSFORM, "transform"),
                             (T::SHADOW, "shadow"),
                             (T::SHAPE, "shape"),
+                            #[cfg(nsh_has_clip_path)]
+                            (T::CLIP_PATH, "clip-path"),
                         ]
                         .into_iter()
                         .filter(|(bit, _)| p.has(*bit))
@@ -946,6 +953,31 @@ fn list(items: impl Iterator<Item = String>) -> String {
 
 fn or_none(s: String) -> String {
     if s.is_empty() { "none".into() } else { s }
+}
+
+/// `clipPath`: `inset(<top> <right> <bottom> <left> round <top-left>
+/// <top-right> <bottom-right> <bottom-left>)`, every edge and corner
+/// written out; an edge of both a length and a percentage as
+/// `calc(<length> + <percentage>)`.
+#[cfg(nsh_has_clip_path)]
+fn clip_inset(c: nsh_core::ClipInset) -> String {
+    let edge = |points: Points, fraction: Percentage| match (points.0 != 0.0, fraction.0 != 0.0) {
+        (true, true) => format!("calc({} + {}%)", num(points), num(fraction.0 * 100.0)),
+        (false, true) => format!("{}%", num(fraction.0 * 100.0)),
+        _ => num(points),
+    };
+    let (o, f, r) = (c.offsets, c.fractions, c.radii);
+    format!(
+        "inset({} {} {} {} round {} {} {} {})",
+        edge(o.top, f.top),
+        edge(o.right, f.right),
+        edge(o.bottom, f.bottom),
+        edge(o.left, f.left),
+        num(r.top_left),
+        num(r.top_right),
+        num(r.bottom_right),
+        num(r.bottom_left),
+    )
 }
 
 /// `{ width, height }`: both members are required.
