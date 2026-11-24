@@ -493,6 +493,8 @@ impl Mounted {
                 if let Some(origin) = &w.allow_origin {
                     out.put("allowOrigin", origin.to_string());
                 }
+                #[cfg(nsh_has_webview_zoomable)]
+                out.put("zoomable", w.zoomable.to_string());
             }
             Some(ViewKind::Video) => {
                 let v = match &self.native {
