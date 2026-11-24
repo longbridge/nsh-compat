@@ -488,6 +488,8 @@ impl Mounted {
                     w.back_forward_gestures.to_string(),
                 );
                 out.put("incognito", w.incognito.to_string());
+                #[cfg(nsh_has_webview_zoomable)]
+                out.put("zoomable", w.zoomable.to_string());
             }
             Some(ViewKind::Video) => {
                 let v = match &self.native {

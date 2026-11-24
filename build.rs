@@ -18,6 +18,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(nsh_has_paste_max_size)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_clip_path)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_pan_edge)");
+    println!("cargo:rustc-check-cfg=cfg(nsh_has_webview_zoomable)");
 
     // The checker must still compile against NSH checkouts predating these
     // fields, so detect the public API before referring to their Rust fields.
@@ -80,6 +81,13 @@ fn main() {
     // `origin`.
     if nsh_core::js::host::declarations().contains("edge?: PanEdge;") {
         println!("cargo:rustc-cfg=nsh_has_pan_edge");
+    }
+    // Scroll views had `zoomable` first: the web view's is its own spec.
+    if specs
+        .iter()
+        .any(|spec| spec.name == "zoomable" && spec.on & nsh_core::js::host::on::WEBVIEW != 0)
+    {
+        println!("cargo:rustc-cfg=nsh_has_webview_zoomable");
     }
     if Style::default()
         .set("glassTintColor", StyleValue::Str("#ff0000"))
