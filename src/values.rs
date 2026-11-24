@@ -488,6 +488,11 @@ impl Mounted {
                     w.back_forward_gestures.to_string(),
                 );
                 out.put("incognito", w.incognito.to_string());
+                // Its one written form (`scheme://host[:port]`).
+                #[cfg(nsh_has_allow_origin)]
+                if let Some(origin) = &w.allow_origin {
+                    out.put("allowOrigin", origin.to_string());
+                }
             }
             Some(ViewKind::Video) => {
                 let v = match &self.native {

@@ -18,6 +18,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(nsh_has_paste_max_size)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_clip_path)");
     println!("cargo:rustc-check-cfg=cfg(nsh_has_pan_edge)");
+    println!("cargo:rustc-check-cfg=cfg(nsh_has_allow_origin)");
 
     // The checker must still compile against NSH checkouts predating these
     // fields, so detect the public API before referring to their Rust fields.
@@ -80,6 +81,9 @@ fn main() {
     // `origin`.
     if nsh_core::js::host::declarations().contains("edge?: PanEdge;") {
         println!("cargo:rustc-cfg=nsh_has_pan_edge");
+    }
+    if specs.iter().any(|spec| spec.name == "allowOrigin") {
+        println!("cargo:rustc-cfg=nsh_has_allow_origin");
     }
     if Style::default()
         .set("glassTintColor", StyleValue::Str("#ff0000"))
