@@ -2579,7 +2579,10 @@ fn event_payload(
                 either("pagePosition.x", "pageX").unwrap_or(left + location_x),
                 either("pagePosition.y", "pageY").unwrap_or(top + location_y),
             );
-            #[allow(clippy::needless_update, reason = "NSH may add modifiers (altGraph) this event does not read")]
+            #[allow(
+                clippy::needless_update,
+                reason = "NSH may add modifiers (altGraph) this event does not read"
+            )]
             let modifiers = Modifiers {
                 ctrl: flag("modifiers.control", "ctrlKey"),
                 alt: flag("modifiers.alt", "altKey"),
